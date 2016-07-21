@@ -127,6 +127,19 @@ class Integer(Property):
 		return value or 0
 
 
+class Boolean(Integer):
+	format = 'q'
+
+	def from_raw(self, value):
+		if isinstance(value, str):
+			return False if value == 'False' else True
+		else:
+			return False if value == 0 else True
+
+	def to_raw(self, value):
+		return 1 if value else 0
+
+
 class String(Property):
 	format = 's'
 
@@ -175,6 +188,13 @@ class Element(object):
 		return 'table:' + cls.__name__
 
 	@classmethod
+	def indices_format(cls):
+		for index in getattr(cls, 'indices', list()):
+			table = 'index:{}:{}'.format(cls.__name__, index.name)
+			columns = 'columns=({})'.format(index.name)
+			yield table, columns
+
+	@classmethod
 	def format(cls):
 		properties = cls._properties.values()
 		keys = [p.format for p in properties if p.options.get('key', False)]
@@ -206,7 +226,11 @@ class Element(object):
 class Badge(Element):
 	UserId = Integer()
 	Name = String()
-	Date = String()
+	Date = DateTime()
+	TagBased = Boolean()
+	Class = Integer()
+
+	indices = [UserId]
 
 
 class Comment(Element):
@@ -216,6 +240,8 @@ class Comment(Element):
 	Text = String()
 	CreationDate = DateTime()
 	UserId = Integer()
+
+	indices = [PostId]
 
 
 class Post(Element):
@@ -240,6 +266,8 @@ class Post(Element):
 	CommentCount = Integer()
 	FavoriteCount = Integer()
 
+	indices = [PostTypeId, ParentId]
+
 
 class PostLink(Element):
 	CreationDate = DateTime()
@@ -247,6 +275,7 @@ class PostLink(Element):
 	RelatedPostId = Integer()
 	LinkTypeId = Integer()  # 1 Link, 3 Duplicate
 
+	indices = [PostId]
 
 class User(Element):
 	Reputation = Integer()
@@ -283,6 +312,8 @@ def load(dump, database):
 		filepath = os.path.join(dump, klass.filename())
 		print('* loading {}'.format(filepath))
 		session.create(klass.table(), klass.format())
+		for index, columns in klass.indices_format():
+			session.create(index, columns)
 		cursor = session.open_cursor(klass.table(), None, '')
 		for data in iterate(filepath):
 			object = klass(**data)
