@@ -168,7 +168,7 @@ class Element(object):
 
 	@classmethod
 	def filename(cls):
-		return cls.__name__.lower() + 's.xml'
+		return cls.__name__ + 's.xml'
 
 	@classmethod
 	def table(cls):
@@ -245,7 +245,7 @@ class PostLink(Element):
 	CreationDate = DateTime()
 	PostId = Integer()
 	RelatedPostId = Integer()
-	PostLinkTypeId = Integer()  # 1 Link, 3 Duplicate
+	LinkTypeId = Integer()  # 1 Link, 3 Duplicate
 
 
 class User(Element):
@@ -261,11 +261,14 @@ class User(Element):
 	Views = Integer()
 	UpVotes = Integer()
 	DownVotes = Integer()
+	LastAccessDate = DateTime()
+	AccountId = Integer()
+	ProfileImageUrl = String()	
 
 # load
 
-def iterate(dump, filename):
-	with open(os.path.join(dump, filename)) as f:
+def iterate(filepath):
+	with open(filepath) as f:
 		tree = etree.iterparse(f)
 		for event, row in tree:
 			if event == 'end' and row.tag == 'row':
@@ -276,11 +279,12 @@ def load(dump, database):
 	connection = wiredtiger_open(database, "create")
 	session = connection.open_session(None)
 
-	for klass in [Post, PostLink, User]:
-		print('* loading {}'.format(klass.filename()))
+	for klass in [Comment, Badge, Post, PostLink, User]:
+		filepath = os.path.join(dump, klass.filename())
+		print('* loading {}'.format(filepath))
 		session.create(klass.table(), klass.format())
 		cursor = session.open_cursor(klass.table(), None, '')
-		for data in iterate(dump, klass.filename()):
+		for data in iterate(filepath):
 			object = klass(**data)
 			cursor.set_key(*object.keys())
 			cursor.set_value(*object.values())
