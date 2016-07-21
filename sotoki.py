@@ -4,9 +4,7 @@
 Usage:
   sotoki.py run <url> <publisher> [--directory=<dir>]
   sotoki.py load <work-directory>
-  sotoki.py render <templates> <database> <output> <title> <publisher> [--directory=<dir>]
-  sotoki.py render-users <templates> <database> <output> <title> <publisher> [--directory=<dir>]
-  sotoki.py offline <output> <cores>
+  sotoki.py render questions <work-directory> <title> <publisher>
   sotoki.py (-h | --help)
   sotoki.py --version
 
@@ -141,11 +139,14 @@ class Boolean(Integer):
 
 
 class String(Property):
-        format = 's'
+        format = 'S'
 
         def from_raw(self, value):
-                return value  # FIXME:f or some reason it's already utf8
-
+                try:
+                        return value.decode('utf-8')
+                except:
+                        return value
+                
         def to_raw(self, value):
                 return (value or '').encode('utf-8')
 
@@ -166,7 +167,7 @@ class Element(object):
                 # This is possible because `self._properties` is an `OrderedDict`
                 properties = self._properties.values()
                 for value, property in zip(args, properties):
-                        setattr(self, property.name, value)
+                        setattr(self, property.name, property.from_raw(value))
 
                 # assign `kwargs`. Overrides already set values...
                 for name, value in kwargs.items():
@@ -222,6 +223,8 @@ class Element(object):
                                         yield value
                 return list(iter())
 
+        def __getitem__(self, key):  # HACK: to avoid to rework all the templates
+                return getattr(self, key)
 
 class Badge(Element):
         UserId = Integer()
@@ -318,7 +321,7 @@ def load(work):
         db = os.path.join(work, 'db')
         
         # prepare wiredtiger
-        connection = wiredtiger_open(database, "create")
+        connection = wiredtiger_open(db, "create")
         session = connection.open_session(None)
 
         for klass in [Tag, Comment, Badge, Post, PostLink, User]:
@@ -337,19 +340,6 @@ def load(work):
 
         connection.close()
 
-
-# helper
-
-class Worker(Process):
-        def __init__(self, queue):
-                super(Worker, self).__init__()
-                self.queue = queue
-
-        def run(self):
-                print 'Computing things!'
-                for data in iter(self.queue.get, None):
-                        # Use data
-                        some_questions(*data)
 
 # templating
 
@@ -515,69 +505,42 @@ def offline(output, cores):
         pool.map(process, args)
 
 
-def render_questions(templates, database, output, title, publisher, dump, cores):
-        # wrap the actual database
+def db_iter_questions(session):
+        index = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
+        posts = session.open_cursor('table:Post', None, None)
+        index.set_key(1)
+        index.search()
+        while True:
+                uid = index.get_value()
+                posts.set_key(uid)
+                posts.search()
+                values = posts.get_value()
+                print values
+                question = Post(uid, *values)
+                import debug;
+                yield question
+                if not (index.next() == 0 and index.get_key() == 1):
+                        break
+        index.close()
+        posts.close()
+
+
+def render_questions(work, title, publisher):
         print 'render questions'
-        db = os.path.join(database, 'se-dump.db')
-        conn = sqlite3.connect(db)
-        conn.row_factory = dict_factory
-        cursor = conn.cursor()
-        # create table tags-questions
-        sql = "CREATE TABLE IF NOT EXISTS questiontag(id INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE, Score INTEGER, Title TEXT, CreationDate TEXT, Tag TEXT)"
-        cursor.execute(sql)
-        conn.commit()
-        os.makedirs(os.path.join(output, 'question'))
-        request_queue = Queue()
-        for i in range(cores):
-                Worker(request_queue).start()
-        offset = 0
-        while offset is not None:
-                questions = cursor.execute("SELECT * FROM posts WHERE PostTypeId == 1 LIMIT 1001 OFFSET ? ",  ( offset, ) ).fetchall()
-                try:
-                        questions[1000]
-                except IndexError:
-                        offset = None
-                else:
-                        offset += 1000
-                questions = questions[:1000]
-                for question in questions:
-                        question["Tags"] = question["Tags"][1:-1].split('><')
-                        for t in question["Tags"]:
-                                sql = "INSERT INTO QuestionTag(Score, Title, CreationDate, Tag) VALUES(?, ?, ?, ?)"
-                                cursor.execute(sql, (question["Score"], question["Title"], question["CreationDate"], t))
-                        user = cursor.execute("SELECT DisplayName, Reputation  FROM users WHERE Id == ? ", (str(question["OwnerUserId"]),)).fetchone()
-                        question["OwnerUserId"] = user
-                        question["comments"] = cursor.execute("SELECT * FROM comments WHERE Id == ? ", (str(question["Id"]),)).fetchall()
-                        for u in question["comments"]:
-                                tmp = cursor.execute("SELECT DisplayName  FROM users WHERE Id == ?", (str(u["UserId"]),)).fetchone()
-                                if tmp is not None:
-                                        u["UserDisplayName"] = tmp["DisplayName"]
-                        question["answers"] = cursor.execute("SELECT * FROM posts WHERE PostTypeId == 2 AND ParentID == ? ", (str(question["Id"]),)).fetchall()
-                        for q in question["answers"]:
-                                user = cursor.execute("SELECT DisplayName, Reputation  FROM users WHERE Id == ? ", (str(q["OwnerUserId"]),)).fetchone()
-                                q["OwnerUserId"] = user
-                                q["comments"] = cursor.execute("SELECT * FROM comments WHERE Id == ? ", (str(q["Id"]),)).fetchall()
-                                for u in q["comments"]:
-                                        tmp = cursor.execute("SELECT DisplayName FROM users WHERE Id == ? ", (str(u["UserId"]),)).fetchone()
-                                        if tmp is not None:
-                                                u["UserDisplayName"] = tmp["DisplayName"]
-                        tmp = cursor.execute("SELECT PostId FROM postlinks WHERE RelatedPostId == ? ", (str(question["Id"]),)).fetchall()
-                        question["relateds"] = []
-                        for links in tmp:
-                                name = cursor.execute("SELECT Title FROM posts WHERE Id == ? ", (links["PostId"],)).fetchone()
-                                if name is not None:
-                                        question["relateds"].append(name["Title"])
-                        data_send = [templates, database, output, title, publisher, dump, question]
-                        request_queue.put(data_send)
-                conn.commit()
-        for i in range(cores):
-                request_queue.put(None)
+        # prepare paths
+        templates = os.path.abspath('templates')
+        database = os.path.join(work, 'db')
+        build = os.path.join(work, 'build', 'question')
+        # os.mkdir(build)
+        dump = os.path.join(work, 'dump')
+        # prepare database
+        connection = wiredtiger_open(database, "create")
+        session = connection.open_session(None)
 
-
-def some_questions(templates, database, output, title, publisher, dump, question):
-        filename = '%s.html' % slugify(question["Title"])
-        filepath = os.path.join(output, 'question', filename)
-        try:
+        for question in db_iter_questions(session):
+                pseudo = u'{} {}'.format(question.Id, question.Title)
+                filename = slugify(pseudo) + '.html'
+                filepath = os.path.join(build, filename)
                 jinja(
                         filepath,
                         'question.html',
@@ -587,8 +550,6 @@ def some_questions(templates, database, output, title, publisher, dump, question
                         title=title,
                         publisher=publisher,
                 )
-        except:
-                print ' * failed to generate: %s' % filename
 
 
 def render_tags(templates, database, output, title, publisher, dump):
@@ -763,8 +724,8 @@ def create_zim(static_folder, zim_path, title, description, lang_input, publishe
                 'home': 'index.html',
                 'favicon': 'favicon.png',
                 'static': static_folder,
-                'zim': zim_path
-        }
+                'zim': zim_path 
+       }
 
         cmd = ('zimwriterfs --welcome="{home}" --favicon="{favicon}" '
                    '--language="{languages}" --title="{title}" '
@@ -795,38 +756,19 @@ def bin_is_present(binary):
 
 
 if __name__ == '__main__':
-        arguments = docopt(__doc__, version='sotoki 0.1')
-        if arguments['load']:
-                load(arguments['<work-directory>'])
-        elif arguments['render']:
-                render_questions(
-                        arguments['<templates>'],
-                        arguments['<database>'],
-                        arguments['<output>'],
-                        arguments['<title>'],
-                        arguments['<publisher>'],
-                        arguments['--directory']
-                )
-                render_tags(
-                        arguments['<templates>'],
-                        arguments['<database>'],
-                        arguments['<output>'],
-                        arguments['<title>'],
-                        arguments['<publisher>'],
-                        arguments['--directory']
-                )
-
-        elif arguments['render-users']:
-                render_users(arguments['<templates>'], arguments['<database>'], arguments['<output>'])  # noqa
-        elif arguments['offline']:
-                offline(arguments['<output>'], int(arguments['<cores>']))
-        elif arguments['run']:
+        args = docopt(__doc__, version='sotoki 0.3')
+        if args['load']:
+                load(args['<work-directory>'])
+        elif args['render']:
+                if args['questions']:
+                        render_questions(args['<work-directory>'], args['<title>'], args['<publisher>'])
+        elif args['run']:
                 if not bin_is_present("zimwriterfs"):
                         sys.exit("zimwriterfs is not available, please install it.")
                 # load dump into database
-                url = arguments['<url>']
-                publisher = arguments['<publisher>']
-                dump = arguments['--directory']
+                url = args['<url>']
+                publisher = args['<publisher>']
+                dump = args['--directory']
                 database = 'work'
                 load(dump, database)
                 # render templates into `output`
