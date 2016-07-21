@@ -32,30 +32,16 @@
         <p>viewed: {{ question["ViewCount"] | intspace }} times</p>
         <p>active: <span class="date" title="{{ question["LastActivityDate"] }}">{{ question["LastActivityDate"] }}</span></p>
       </div>
-    {#   {% if question["links"] %}  #}
-    {#     <div id="related" class="row">  #}
-    {#       <h3>Related</h3>  #}
-    {#       <ul>  #}
-    {#         {% for link in question["related"] %}  #}
-    {#           {% if link %}  #}
-    {#             <li><a href="{{ rooturl }}/question/{{ link | slugify }}.html" >{{ link }}<a></li>  #}
-    {#           {% endif %}  #}
-    {#         {% endfor %}  #}
-    {#         <ul>  #}
-    {#     </div>  #}
-    {# {% endif %}  #}
-    {# {% if question["links"] %}  #}
-    {#   <div id="related" class="row">  #}
-    {#     <h3>Duplicates</h3>  #}
-    {#     <ul>  #}
-    {#       {% for link in question["duplicates"] %}  #}
-    {#         {% if link %}  #}
-    {#           <li><a href="{{ rooturl }}/question/{{ link | slugify }}.html" >{{ link }}<a></li>  #}
-    {#         {% endif %}  #}
-    {#       {% endfor %}  #}
-    {#       <ul>  #}
-    {#   </div>  #}
-    {# {% endif %}  #}
+      {% if question["links"] %} {# Related and Duplicates are mixed  #}
+        <div id="related" class="row">   
+          <h3>Related</h3>   
+          <ul>   
+            {% for link in question["links"] %}   
+              <li><a href="{{ rooturl }}/question/{{ link.pseudo() | slugify }}.html" >{{ link.Title }}<a></li>
+            {% endfor %}   
+            <ul>   
+        </div>   
+    {% endif %}   
     </div>
   </div>
   <script src="/static/main.js"></script>

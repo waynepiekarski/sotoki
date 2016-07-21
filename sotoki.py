@@ -146,7 +146,7 @@ class String(Property):
             return value.decode('utf-8')
         except:
             return value
-        
+
     def to_raw(self, value):
         return (value or '').encode('utf-8')
 
@@ -271,6 +271,9 @@ class Post(Element):
 
     indices = [PostTypeId, ParentId]
 
+    def pseudo(self):
+        return u'{} {}'.format(self.Id, self.Title)
+
 
 class PostLink(Element):
     CreationDate = DateTime()
@@ -319,7 +322,7 @@ def load(work):
     # prepare paths
     dump = os.path.join(work, 'dump')
     db = os.path.join(work, 'db')
-    
+
     # prepare wiredtiger
     connection = wiredtiger_open(db, "create")
     session = connection.open_session(None)
@@ -512,11 +515,12 @@ def db_get_comment(session, uid):
     comment = Comment(uid, *values)
     cursor.close()
     return comment
-    
+
 def db_get_post(session, uid):
     posts = session.open_cursor('table:Post', None, None)
     posts.set_key(uid)
-    posts.search()
+    if posts.search() != 0:
+        return None
     post = posts.get_value()
     post = Post(uid, *post)
     # get comments
@@ -536,35 +540,21 @@ def db_get_post(session, uid):
     index.close()
     posts.close()
     return post
-    
 
-def db_iter_questions(session):
-    questions = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
-    answers = session.open_cursor('index:Post:ParentId(Id)', None, None)
-    questions.set_key(1)
-    questions.search()
-    while True:
-        question = questions.get_value()
-        question = db_get_post(session, question)
-        # get answers
-        question.answers = list()
-        answers.set_key(question.Id)
-        if answers.search() == 0:
-            while True:
-                answer = answers.get_value()
-                answer = db_get_post(session, answer)
-                question.answers.append(answer)
-                if answers.next() == 0:
-                    if answers.get_key() == question.Id:
-                        continue
-                break
-            question.answers.sort(key= lambda p: p.Score, reverse=True)
-        # gather comments
-        yield question
-        if not (questions.next() == 0 and questions.get_key() == 1):
-            break
-    answers.close()
-    questions.close()
+
+def render_question(args):
+    build, templates, title, publisher, question = args
+    filename = slugify(question.pseudo()) + '.html'
+    filepath = os.path.join(build, filename)
+    jinja(
+        filepath,
+        'question.html',
+        templates,
+        question=question,
+        rooturl="..",
+        title=title,
+        publisher=publisher,
+    )
 
 
 def render_questions(work, title, publisher):
@@ -579,20 +569,52 @@ def render_questions(work, title, publisher):
     connection = wiredtiger_open(database, "create")
     session = connection.open_session(None)
 
-    for question in db_iter_questions(session):
-        pseudo = u'{} {}'.format(question.Id, question.Title)
-        filename = slugify(pseudo) + '.html'
-        filepath = os.path.join(build, filename)
-        jinja(
-            filepath,
-            'question.html',
-            templates,
-            question=question,
-            rooturl="..",
-            title=title,
-            publisher=publisher,
-        )
+    def db_iter_questions(session):
+        questions = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
+        answers = session.open_cursor('index:Post:ParentId(Id)', None, None)
+        links = session.open_cursor('index:PostLink:PostId(RelatedPostId)', None, None)
+        questions.set_key(1)
+        questions.search()
+        while True:
+            question = questions.get_value()
+            question = db_get_post(session, question)
+            # get answers
+            question.answers = list()
+            answers.set_key(question.Id)
+            if answers.search() == 0:
+                while True:
+                    answer = answers.get_value()
+                    answer = db_get_post(session, answer)
+                    question.answers.append(answer)
+                    if answers.next() == 0:
+                        if answers.get_key() == question.Id:
+                            continue
+                    break
+                question.answers.sort(key= lambda p: p.Score, reverse=True)
+            # get links
+            question.links = list()
+            links.set_key(question.Id)
+            if links.search() == 0:
+                while True:
+                    # FIXME: related and duplicates are mixed
+                    link = links.get_value()
+                    link = db_get_post(session, link)
+                    if link:
+                        question.links.append(link)
+                    if links.next() == 0:
+                        if links.get_key() == question.Id:
+                            continue
+                    break
+            yield build, templates, title, publisher, question
 
+            if questions.next() == 0:
+                if questions.get_key() == 1:
+                    continue
+            break
+        answers.close()
+        questions.close()
+    pool = Pool(4)
+    pool.map(render_question, db_iter_questions(session))
 
 def render_tags(templates, database, output, title, publisher, dump):
     print 'render tags'
@@ -766,7 +788,7 @@ def create_zim(static_folder, zim_path, title, description, lang_input, publishe
         'home': 'index.html',
         'favicon': 'favicon.png',
         'static': static_folder,
-        'zim': zim_path 
+        'zim': zim_path
        }
 
     cmd = ('zimwriterfs --welcome="{home}" --favicon="{favicon}" '
