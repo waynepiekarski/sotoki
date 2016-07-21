@@ -504,25 +504,67 @@ def offline(output, cores):
     print 'start offline process with', cores, 'cores'
     pool.map(process, args)
 
-
-def db_iter_questions(session):
-    index = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
+def db_get_comment(session, uid):
+    cursor = session.open_cursor('table:Comment', None, None)
+    cursor.set_key(uid)
+    cursor.search()
+    values = cursor.get_value()
+    comment = Comment(uid, *values)
+    cursor.close()
+    return comment
+    
+def db_get_post(session, uid):
     posts = session.open_cursor('table:Post', None, None)
-    index.set_key(1)
-    index.search()
-    while True:
-        uid = index.get_value()
-        posts.set_key(uid)
-        posts.search()
-        values = posts.get_value()
-        print values
-        question = Post(uid, *values)
-        import debug;
-        yield question
-        if not (index.next() == 0 and index.get_key() == 1):
+    posts.set_key(uid)
+    posts.search()
+    post = posts.get_value()
+    post = Post(uid, *post)
+    # get comments
+    index = session.open_cursor('index:Comment:PostId(Id)', None, None)
+    index.set_key(post.Id)
+    post.comments = list()
+    if index.search() == 0:
+        while True:
+            comment = index.get_value()
+            comment = db_get_comment(session, comment)
+            post.comments.append(comment)
+            if index.next() == 0:
+                if index.get_key() == post.Id:
+                    continue
             break
+        post.comments.sort(key=lambda c: c.CreationDate)
     index.close()
     posts.close()
+    return post
+    
+
+def db_iter_questions(session):
+    questions = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
+    answers = session.open_cursor('index:Post:ParentId(Id)', None, None)
+    questions.set_key(1)
+    questions.search()
+    while True:
+        question = questions.get_value()
+        question = db_get_post(session, question)
+        # get answers
+        question.answers = list()
+        answers.set_key(question.Id)
+        if answers.search() == 0:
+            while True:
+                answer = answers.get_value()
+                answer = db_get_post(session, answer)
+                question.answers.append(answer)
+                if answers.next() == 0:
+                    if answers.get_key() == question.Id:
+                        continue
+                break
+            question.answers.sort(key= lambda p: p.Score, reverse=True)
+        # gather comments
+        yield question
+        if not (questions.next() == 0 and questions.get_key() == 1):
+            break
+    answers.close()
+    questions.close()
 
 
 def render_questions(work, title, publisher):
