@@ -15,8 +15,8 @@ Options:
   --version     Show version.
   --directory=<dir>   Specify a directory for xml files [default: work/dump/]
 """
-import sqlite3
 import os
+from collections import OrderedDict
 import xml.etree.cElementTree as etree
 import logging
 
@@ -31,6 +31,8 @@ from multiprocessing import Pool
 from multiprocessing import cpu_count
 from multiprocessing import Queue
 from multiprocessing import Process
+
+from wiredtiger import wiredtiger_open
 
 from jinja2 import Environment
 from jinja2 import FileSystemLoader
@@ -53,6 +55,205 @@ import sys
 import datetime
 import subprocess
 
+# wiredtiger orm
+
+# Generic declarative API. Does not support references/fk
+# forked from https://gist.github.com/amirouche/4384b5b2f02b469fb8e3
+
+class Property(object):
+    """Base class data-descriptor for element properties.
+
+    Subclass it to implement new types. Most likely you will
+    need to implement `unwrap` and `wrap`.
+    """
+
+    COUNTER = 0
+
+    def __init__(self, **options):
+        self.options = options
+        # set by metaclass
+        self.klass = None
+        self.name = None
+        self.uid = Property.COUNTER + 1
+        Property.COUNTER += 1
+
+    def __repr__(self):
+        return '<Property class:{} name:{} uid:{}>'.format(self.klass, self.name, self.uid)
+
+    def __get__(self, element, cls=None):
+        if element is None:
+            # `Property` instance is accessed through a class
+            return self
+        else:
+            return element._values[self.name]
+
+    def __set__(self, element, value):
+        """Set the `value` for `element`"""
+        element._values[self.name] = value
+
+    def __delete__(self, element):
+        del element._values[self.name]
+
+class No5(type):
+    """Metaclass for element classes"""
+
+    def __init__(klass, classname, bases, namespace):
+        klass._properties = OrderedDict()
+
+        for base in bases:
+            try:
+                klass._properties.update(base._properties)
+            except AttributeError:
+                pass  # not a valid Element
+
+        # register properties defined for this class
+        properties = [(a, b) for a, b in namespace.items() if isinstance(b, Property)]
+        properties.sort(key=lambda x: x[1].uid)
+        for name, attribute in properties:
+            klass._properties[name] = attribute
+            attribute.name = name
+            attribute.klass = klass.__name__
+
+class Integer(Property):
+    format = 'q'
+
+    def from_raw(self, value):
+        return int(value)
+
+    def to_raw(self, value):
+        return value or 0
+    
+class String(Property):
+    format = 's'
+
+    def from_raw(self, value):
+        return value  # FIXME:f or some reason it's already utf8
+
+    def to_raw(self, value):
+        return (value or '').encode('utf-8')
+
+class DateTime(String):
+    pass
+
+
+class Element(object):
+
+    __metaclass__ = No5
+
+    Id = Integer(key=True)
+
+    def __init__(self, *args, **kwargs):
+        self._values = OrderedDict()
+        # assign args to properties using the declaration order of properties.
+        # This is possible because `self._properties` is an `OrderedDict`
+        properties = self._properties.values()
+        for value, property in zip(args, properties):
+            property.set(self, value)
+
+        # assign `kwargs`. Overrides already set values...
+        for name, value in kwargs.items():
+            try:
+                property = self._properties[name]
+            except KeyError:
+                msg = '`{}` Element class has no `{}` property'
+                msg = msg.format(type(self), name)
+                raise ValueError(msg)
+            else:
+                setattr(self, name, property.from_raw(value))
+
+    @classmethod
+    def filename(cls):
+        return cls.__name__.lower() + 's.xml'
+
+    @classmethod
+    def table(cls):
+        return 'table:' + cls.__name__
+
+    @classmethod
+    def format(cls):
+        properties = cls._properties.values()
+        keys = [p.format for p in properties if p.options.get('key', False)]
+        values = [p.format for p in properties if not p.options.get('key', False)]
+        config = 'key_format=' + ''.join(keys) + ',value_format=' + ''.join(values)
+        names = [p.name for p in properties]
+        config += ',columns=(' + ','.join(names) + ')'
+        return config
+
+    def keys(self):
+        def iter():
+            for property in self._properties.values():
+                if property.options.get('key', False):
+                    value = self._values[property.name]
+                    value = property.to_raw(value)
+                    yield value
+        return list(iter())
+
+    def values(self):
+        def iter():
+            for property in self._properties.values():
+                if not property.options.get('key', False):
+                    value = self._values.get(property.name)
+                    value = property.to_raw(value)
+                    yield value
+        return list(iter())
+
+
+class Badge(Element):
+    UserId = Integer()
+    Name = String()
+    Date = String()
+
+class Comment(Element):
+    UserDisplayName = String()
+    PostId = Integer()
+    Score = Integer()
+    Text = String()
+    CreationDate = DateTime()
+    UserId = Integer()
+
+class Post(Element):
+    PostTypeId = Integer()  # 1 question, 2 Answer
+    ParentId = Integer()
+    AcceptedAnswerId = Integer()
+    CreationDate = DateTime()
+    Score = Integer()
+    ViewCount = Integer()
+    Body = String()
+    OwnerUserId = Integer()
+    OwnerDisplayName = String()    
+    LastEditorUserId = Integer()
+    LastEditorDisplayName = String()
+    LastEditDate = DateTime()
+    LastActivityDate = DateTime()
+    CommunityOwnedDate = DateTime()
+    ClosedDate = DateTime()
+    Title = String()
+    Tags = String()
+    AnswerCount = Integer()
+    CommentCount = Integer()
+    FavoriteCount = Integer()
+
+class PostLink(Element):
+    CreationDate = DateTime()
+    PostId = Integer()
+    RelatedPostId = Integer()
+    PostLinkTypeId = Integer()  # 1 Link, 3 Duplicate
+
+class User(Element):
+    Reputation = Integer()
+    CreationDate = String()
+    DisplayName = String()
+    EmailHash = String()
+    LastActivityDate = DateTime()
+    WebsiteUrl = String()
+    Location = String()
+    Age = Integer()
+    AboutMe = String()
+    Views = Integer()
+    UpVotes = Integer()
+    DownVotes = Integer()
+
+# helper
 
 class Worker(Process):
     def __init__(self, queue):
@@ -64,115 +265,6 @@ class Worker(Process):
         for data in iter(self.queue.get, None):
             # Use data
             some_questions(*data)
-
-
-ANATHOMY = {
-    'badges': {
-        'Id': 'INTEGER',
-        'UserId': 'INTEGER',
-        'Name': 'TEXT',
-        'Date': 'DATETIME',
-        'Class': 'INTEGER',
-        'TagBased': 'INTEGER'
-    },
-    'comments': {
-        'Id': 'INTEGER',
-        'PostId': 'INTEGER',
-        'Score': 'INTEGER',
-        'Text': 'TEXT',
-        'CreationDate': 'DATETIME',
-        'UserId': 'INTEGER',
-        'UserDisplayName': 'TEXT'
-    },
-    'posts': {
-        'Id': 'INTEGER',
-        'PostTypeId': 'INTEGER',  # 1: Question, 2: Answer
-        'ParentID': 'INTEGER',  # (only present if PostTypeId is 2)
-        'AcceptedAnswerId': 'INTEGER',  # (only present if PostTypeId is 1)
-        'CreationDate': 'DATETIME',
-        'Score': 'INTEGER',
-        'ViewCount': 'INTEGER',
-        'Body': 'TEXT',
-        'OwnerUserId': 'INTEGER',  # (present only if user has not been deleted)
-        'OwnerDisplayName': 'TEXT',
-        'LastEditorUserId': 'INTEGER',
-        'LastEditorDisplayName': 'TEXT',  # ="Rich B"
-        'LastEditDate': 'DATETIME',  # "2009-03-05T22:28:34.823"
-        'LastActivityDate': 'DATETIME',  # "2009-03-11T12:51:01.480"
-        'CommunityOwnedDate': 'DATETIME',  # (present only if post is community wikied)
-        'Title': 'TEXT',
-        'Tags': 'TEXT',
-        'AnswerCount': 'INTEGER',
-        'CommentCount': 'INTEGER',
-        'FavoriteCount': 'INTEGER',
-        'ClosedDate': 'DATETIME'
-    },
-    'votes': {
-        'Id': 'INTEGER',
-        'PostId': 'INTEGER',
-        'UserId': 'INTEGER',
-        'VoteTypeId': 'INTEGER',
-        # -   1: AcceptedByOriginator
-        # -   2: UpMod
-        # -   3: DownMod
-        # -   4: Offensive
-        # -   5: Favorite
-        # -   6: Close
-        # -   7: Reopen
-        # -   8: BountyStart
-        # -   9: BountyClose
-        # -  10: Deletion
-        # -  11: Undeletion
-        # -  12: Spam
-        # -  13: InformModerator
-        'CreationDate': 'DATETIME',
-        'BountyAmount': 'INTEGER'
-    },
-    'posthistory': {
-        'Id': 'INTEGER',
-        'PostHistoryTypeId': 'INTEGER',
-        'PostId': 'INTEGER',
-        'RevisionGUID': 'INTEGER',
-        'CreationDate': 'DATETIME',
-        'UserId': 'INTEGER',
-        'UserDisplayName': 'TEXT',
-        'Comment': 'TEXT',
-        'Text': 'TEXT'
-    },
-    'postlinks': {
-        'Id': 'INTEGER',
-        'CreationDate': 'DATETIME',
-        'PostId': 'INTEGER',
-        'RelatedPostId': 'INTEGER',
-        'PostLinkTypeId': 'INTEGER',
-        'LinkTypeId': 'INTEGER'
-    },
-    'users': {
-        'Id': 'INTEGER',
-        'Reputation': 'INTEGER',
-        'CreationDate': 'DATETIME',
-        'DisplayName': 'TEXT',
-        'LastAccessDate': 'DATETIME',
-        'WebsiteUrl': 'TEXT',
-        'Location': 'TEXT',
-        'Age': 'INTEGER',
-        'AboutMe': 'TEXT',
-        'Views': 'INTEGER',
-        'UpVotes': 'INTEGER',
-        'DownVotes': 'INTEGER',
-        'EmailHash': 'TEXT',
-        'AccountId': 'INTEGER',
-        'ProfileImageUrl': 'TEXT'
-    },
-    'tags': {
-        'Id': 'INTEGER',
-        'TagName': 'TEXT',
-        'Count': 'INTEGER',
-        'ExcerptPostId': 'INTEGER',
-        'WikiPostId': 'INTEGER'
-    }
-}
-
 
 # templating
 
@@ -227,12 +319,6 @@ def jinja(output, template, templates, **context):
     page = template.render(**context)
     with open(output, 'w') as f:
         f.write(page.encode('utf-8'))
-
-
-def iterate(filepath):
-    items = string2xml(filepath).getroot()
-    for index, item in enumerate(items.iterchildren()):
-        yield item.attrib
 
 
 def download(url, output):
@@ -622,51 +708,29 @@ def bin_is_present(binary):
     else:
         return True
 
+def iterate(dump, filename):
+    with open(os.path.join(dump, filename)) as f:
+        tree = etree.iterparse(f)
+        for event, row in tree:
+            if event == 'end' and row.tag == 'row':
+                yield {key: row.get(key) for key in row.keys()}
 
-def load(dump_path, database_path):
-    dump_database_name = 'se-dump.db'
-    log_filename = 'se-parser.log'
-    create_query = 'CREATE TABLE IF NOT EXISTS {table} ({fields})'
-    insert_query = 'INSERT INTO {table} ({columns}) VALUES ({values})'
+def load(dump, database):
+    connection = wiredtiger_open(database, "create")
+    session = connection.open_session(None)
 
-    logging.basicConfig(filename=os.path.join(dump_path, log_filename), level=logging.INFO)
-    db = sqlite3.connect(os.path.join(database_path, dump_database_name))
+    for klass in [Post, PostLink, User]:
+        print('* loading {}'.format(klass.filename()))
+        session.create(klass.table(), klass.format())
+        cursor = session.open_cursor(klass.table(), None, '')
+        for data in iterate(dump, klass.filename()):
+            object = klass(**data)
+            cursor.set_key(*object.keys())
+            cursor.set_value(*object.values())
+            cursor.insert()
+        cursor.close()
 
-    for file, spec in ANATHOMY.items():
-        print "Opening {0}.xml".format(file)
-        with open(os.path.join(dump_path, file + '.xml')) as xml_file:
-            tree = etree.iterparse(xml_file)
-            table_name = file
-
-            sql_create = create_query.format(
-                table=table_name,
-                fields=", ".join(['{0} {1}'.format(name, type) for name, type in spec.items()]))
-            print('Creating table {0}'.format(table_name))
-
-            try:
-                logging.info(sql_create)
-                db.execute(sql_create)
-            except Exception, e:
-                logging.warning(e)
-
-            for events, row in tree:
-                try:
-                    if row.attrib.values():
-                        logging.debug(row.attrib.keys())
-                        query = insert_query.format(
-                            table=table_name,
-                            columns=', '.join(row.attrib.keys()),
-                            values=('?, ' * len(row.attrib.keys()))[:-2])
-                        db.execute(query, row.attrib.values())
-                        print ".",
-                except Exception, e:
-                    logging.warning(e)
-                    print "x",
-                finally:
-                    row.clear()
-            print "\n"
-            db.commit()
-            del tree
+    connection.close()
 
 
 if __name__ == '__main__':
