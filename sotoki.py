@@ -262,6 +262,33 @@ class User(Element):
 	UpVotes = Integer()
 	DownVotes = Integer()
 
+# load
+
+def iterate(dump, filename):
+	with open(os.path.join(dump, filename)) as f:
+		tree = etree.iterparse(f)
+		for event, row in tree:
+			if event == 'end' and row.tag == 'row':
+				yield {key: row.get(key) for key in row.keys()}
+
+
+def load(dump, database):
+	connection = wiredtiger_open(database, "create")
+	session = connection.open_session(None)
+
+	for klass in [Post, PostLink, User]:
+		print('* loading {}'.format(klass.filename()))
+		session.create(klass.table(), klass.format())
+		cursor = session.open_cursor(klass.table(), None, '')
+		for data in iterate(dump, klass.filename()):
+			object = klass(**data)
+			cursor.set_key(*object.keys())
+			cursor.set_value(*object.values())
+			cursor.insert()
+		cursor.close()
+
+	connection.close()
+
 
 # helper
 
@@ -717,30 +744,6 @@ def bin_is_present(binary):
 		return False
 	else:
 		return True
-
-def iterate(dump, filename):
-	with open(os.path.join(dump, filename)) as f:
-		tree = etree.iterparse(f)
-		for event, row in tree:
-			if event == 'end' and row.tag == 'row':
-				yield {key: row.get(key) for key in row.keys()}
-
-def load(dump, database):
-	connection = wiredtiger_open(database, "create")
-	session = connection.open_session(None)
-
-	for klass in [Post, PostLink, User]:
-		print('* loading {}'.format(klass.filename()))
-		session.create(klass.table(), klass.format())
-		cursor = session.open_cursor(klass.table(), None, '')
-		for data in iterate(dump, klass.filename()):
-			object = klass(**data)
-			cursor.set_key(*object.keys())
-			cursor.set_value(*object.values())
-			cursor.insert()
-		cursor.close()
-
-	connection.close()
 
 
 if __name__ == '__main__':
