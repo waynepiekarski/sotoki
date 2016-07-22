@@ -3,8 +3,10 @@
 
 Usage:
   sotoki.py run <url> <publisher> [--directory=<dir>]
-  sotoki.py load <work-directory>
-  sotoki.py render questions <work-directory> <title> <publisher>
+  sotoki.py load <work>
+  sotoki.py render questions <work> <title> <publisher>
+  sotoki.py benchmark xml load <work>
+  sotoki.py benchmark wiredtiger load <work>
   sotoki.py (-h | --help)
   sotoki.py --version
 
@@ -52,7 +54,9 @@ import envoy
 import sys
 import datetime
 import subprocess
+from setproctitle import setproctitle
 
+setproctitle('sotoki')
 
 # wiredtiger orm
 
@@ -327,7 +331,7 @@ def load(work):
     connection = wiredtiger_open(db, "create")
     session = connection.open_session(None)
 
-    for klass in [Tag, Comment, Badge, Post, PostLink, User]:
+    for klass in [Post]:
         filepath = os.path.join(dump, klass.filename())
         print('* loading {}'.format(filepath))
         session.create(klass.table(), klass.format())
@@ -605,6 +609,7 @@ def render_questions(work, title, publisher):
                         if links.get_key() == question.Id:
                             continue
                     break
+            print question.Title
             yield build, templates, title, publisher, question
 
             if questions.next() == 0:
@@ -614,7 +619,8 @@ def render_questions(work, title, publisher):
         answers.close()
         questions.close()
     pool = Pool(4)
-    pool.map(render_question, db_iter_questions(session))
+    pool.map(render_question, db_iter_questions(session), chunksize=1000)
+    pool.close()
 
 def render_tags(templates, database, output, title, publisher, dump):
     print 'render tags'
@@ -821,11 +827,33 @@ def bin_is_present(binary):
 
 if __name__ == '__main__':
     args = docopt(__doc__, version='sotoki 0.3')
-    if args['load']:
-        load(args['<work-directory>'])
-    elif args['render']:
-        if args['questions']:
-            render_questions(args['<work-directory>'], args['<title>'], args['<publisher>'])
+    if args['benchmark']:
+        if args['xml']:
+            if args['load']:
+                print('* Running benchmark xml load')
+                dump = os.path.join(args['<work>'], 'dump')
+                
+                for klass in [Post]:
+                    filepath = os.path.join(dump, klass.filename())
+                    print('** loading {}'.format(filepath))
+                    for data in iterate(filepath):
+                        obj = klass(**data)
+
+        elif args['wiredtiger']:
+            if args['load']:
+                print('* Running benchmark wiredtiger load')
+                dump = args['<work>']
+                database = os.path.join(dump, 'db')
+
+                connection = wiredtiger_open(database, "create")
+                session = connection.open_session(None)
+
+                cursor = session.open_cursor('table:Post', None, None)
+                cursor.reset()
+                while cursor.next() == 0:
+                    uid = cursor.get_key()
+                    values = cursor.get_value()
+                connection.close()
     elif args['run']:
         if not bin_is_present("zimwriterfs"):
             sys.exit("zimwriterfs is not available, please install it.")
@@ -847,5 +875,11 @@ if __name__ == '__main__':
         # offline images
         offline(output, cores)
         # copy static
-        copy_tree('static', os.path.join('work', 'output', 'static'))
+        copy_tree('static', os.path.join('work>', 'output', 'static'))
         create_zims(title, publisher, description)
+    elif args['load']:
+        load(args['<work>'])
+    elif args['render']:
+        if args['questions']:
+            render_questions(args['<work>'], args['<title>'], args['<publisher>'])
+            cursor.close()
