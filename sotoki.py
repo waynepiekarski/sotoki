@@ -641,7 +641,7 @@ def render_questions(work, title, publisher, cores):
                     break
             links.reset()
             yield build, templates, title, publisher, question
-            
+
             if questions.next() == 0:
                 if questions.get_key() == 1:
                     continue
@@ -865,7 +865,7 @@ if __name__ == '__main__':
             if args['load']:
                 print('* Running benchmark xml load')
                 dump = os.path.join(args['<work>'], 'dump')
-                
+
                 for klass in [Post]:
                     filepath = os.path.join(dump, klass.filename())
                     print('** loading {}'.format(filepath))
@@ -887,38 +887,9 @@ if __name__ == '__main__':
                 while cursor.next() == 0:
                     uid = cursor.get_key()
                     values = cursor.get_value()
-                    question = Post(uid, *values)
-                    build = os.path.join(work, 'build', 'question')
-                    templates = 'templates/'
-                    title = 'SuperUser'
-                    publisher = 'SE'
-                    pool = Pool(maxtasksperchild=1)
-                    # render_question((build, templates, title, publisher, question))
-                    
                 connection.close()
-    elif args['run']:
-        if not bin_is_present("zimwriterfs"):
-            sys.exit("zimwriterfs is not available, please install it.")
-        # load dump into database
-        url = args['<url>']
-        publisher = args['<publisher>']
-        dump = args['--directory']
-        database = 'work'
-        load(dump, database)
-        # render templates into `output`
-        templates = 'templates'
-        output = os.path.join('work', 'output')
-        os.makedirs(output)
-        title, description = grab_title_description_favicon(url, output)
-        render_questions(templates, database, output, title, publisher, dump, cores)
-        render_tags(templates, database, output, title, publisher, dump)
-        render_users(templates, database, output, title, publisher, dump)
-        # offline images
-        offline(output, cores)
-        # copy static
-        copy_tree('static', os.path.join('work>', 'output', 'static'))
-        create_zims(title, publisher, description)
-    elif args['load']:
+
+    Elif args['load']:
         load(args['<work>'])
     elif args['render']:
         if args['questions']:
