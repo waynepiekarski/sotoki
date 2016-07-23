@@ -15,16 +15,16 @@
         {% set post = question %}
         {% include "post.mixin.html" %} 
       </div>
-      {# {% if question["answers"] %}  #}
-      {#   <h2>Answers</h2>  #}
-      {#   <div id="answers">  #}
-      {#     {% for post in question["answers"] %}  #}
-      {#       {% include "post.mixin.html" %}   #}
-      {#     {% endfor %}  #}
-      {#   </div>  #}
-      {# {% else %}  #}
-      {#   <h2>No answers</h2>  #}
-      {# {% endif %}  #}
+      {% if question["answers"] %}  
+        <h2>Answers</h2>  
+        <div id="answers">  
+          {% for post in question["answers"] %}  
+            {% include "post.mixin.html" %}   
+          {% endfor %}  
+        </div>  
+      {% else %}  
+        <h2>No answers</h2>  
+      {% endif %}  
     </div>
     <div class="row col-md-3">
       <div class="row">
@@ -32,16 +32,16 @@
         <p>viewed: {{ question["ViewCount"] | intspace }} times</p>
         <p>active: <span class="date" title="{{ question["LastActivityDate"] }}">{{ question["LastActivityDate"] }}</span></p>
       </div>
-    {#   {% if question["links"] %} {\# Related and Duplicates are mixed  #\} #}
-    {#     <div id="related" class="row">    #}
-    {#       <h3>Related</h3>    #}
-    {#       <ul>    #}
-    {#         {% for link in question["links"] %}    #}
-    {#           <li><a href="{{ rooturl }}/question/{{ link.pseudo() | slugify }}.html" >{{ link.Title }}<a></li> #}
-    {#         {% endfor %}    #}
-    {#         <ul>    #}
-    {#     </div>    #}
-    {# {% endif %}    #}
+      {% if question["links"] %} {# Related and Duplicates are mixed  #} 
+        <div id="related" class="row">    
+          <h3>Related</h3>    
+          <ul>    
+            {% for link in question["links"] %}    
+              <li><a href="{{ rooturl }}/question/{{ link.pseudo() | slugify }}.html" >{{ link.Title }}<a></li> 
+            {% endfor %}    
+            <ul>    
+        </div>    
+    {% endif %}    
     </div>
   </div>
   <script src="/static/main.js"></script>
