@@ -16,6 +16,8 @@ Options:
   --directory=<dir>   Specify a directory for xml files [default: work/dump/]
 """
 import os
+from time import sleep
+from time import time
 from collections import OrderedDict
 import xml.etree.cElementTree as etree
 import logging
@@ -331,7 +333,7 @@ def load(work):
     connection = wiredtiger_open(db, "create")
     session = connection.open_session(None)
 
-    for klass in [Post]:
+    for klass in [Badge, Comment, Post, PostLink, User, Tag]:
         filepath = os.path.join(dump, klass.filename())
         print('* loading {}'.format(filepath))
         session.create(klass.table(), klass.format())
@@ -485,10 +487,26 @@ def process(args):
     print 'offlining finished', uid
 
 
-def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
-    for i in xrange(0, len(l), n):
-        yield l[i:i+n]
+def chunks(iterable, size):
+    """Yield successive chunks of length size from iterable."""
+    out = list()
+    while True:
+        end = False
+        out = list()
+        for i in xrange(size):
+            try:
+                value = next(iterable)
+            except StopIteration:
+                end = True
+                break
+            else:
+                out.append(value)
+        if end == True:
+            yield out
+            break
+        else:
+            yield out
+            continue
 
 
 def offline(output, cores):
@@ -511,38 +529,50 @@ def offline(output, cores):
     print 'start offline process with', cores, 'cores'
     pool.map(process, args)
 
-def db_get_comment(session, uid):
-    cursor = session.open_cursor('table:Comment', None, None)
+
+class Context(object):
+
+    def __init__(self, session):
+        self.table_comment = session.open_cursor('table:Comment', None, None)
+        self.table_post = session.open_cursor('table:Post', None, None)
+        self.index_comment = session.open_cursor('index:Comment:PostId(Id)', None, None)
+        self.index_question = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
+        self.index_answer = session.open_cursor('index:Post:ParentId(Id)', None, None)
+        self.index_link = session.open_cursor('index:PostLink:PostId(RelatedPostId)', None, None)
+
+
+def db_get_comment(context, uid):
+    cursor = context.table_comment
     cursor.set_key(uid)
     cursor.search()
     values = cursor.get_value()
     comment = Comment(uid, *values)
-    cursor.close()
+    cursor.reset()
     return comment
 
-def db_get_post(session, uid):
-    posts = session.open_cursor('table:Post', None, None)
+def db_get_post(context, uid):
+    posts = context.table_post
     posts.set_key(uid)
     if posts.search() != 0:
         return None
     post = posts.get_value()
     post = Post(uid, *post)
     # get comments
-    index = session.open_cursor('index:Comment:PostId(Id)', None, None)
+    index = context.index_comment
     index.set_key(post.Id)
     post.comments = list()
     if index.search() == 0:
         while True:
             comment = index.get_value()
-            comment = db_get_comment(session, comment)
+            comment = db_get_comment(context, comment)
             post.comments.append(comment)
             if index.next() == 0:
                 if index.get_key() == post.Id:
                     continue
             break
         post.comments.sort(key=lambda c: c.CreationDate)
-    index.close()
-    posts.close()
+    index.reset()
+    posts.reset()
     return post
 
 
@@ -572,55 +602,62 @@ def render_questions(work, title, publisher):
     # prepare database
     connection = wiredtiger_open(database, "create")
     session = connection.open_session(None)
+    context = Context(session)
 
-    def db_iter_questions(session):
-        questions = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
-        answers = session.open_cursor('index:Post:ParentId(Id)', None, None)
-        links = session.open_cursor('index:PostLink:PostId(RelatedPostId)', None, None)
+    def db_iter_questions(context):
+        questions = context.index_question
         questions.set_key(1)
         questions.search()
         while True:
             question = questions.get_value()
-            question = db_get_post(session, question)
+            question = db_get_post(context, question)
             # get answers
             question.answers = list()
+            answers = context.index_answer
             answers.set_key(question.Id)
             if answers.search() == 0:
                 while True:
                     answer = answers.get_value()
-                    answer = db_get_post(session, answer)
+                    answer = db_get_post(context, answer)
                     question.answers.append(answer)
                     if answers.next() == 0:
                         if answers.get_key() == question.Id:
                             continue
                     break
                 question.answers.sort(key= lambda p: p.Score, reverse=True)
+            answers.reset()
             # get links
             question.links = list()
+            links = context.index_link
             links.set_key(question.Id)
             if links.search() == 0:
                 while True:
                     # FIXME: related and duplicates are mixed
                     link = links.get_value()
-                    link = db_get_post(session, link)
+                    link = db_get_post(context, link)
                     if link:
                         question.links.append(link)
                     if links.next() == 0:
                         if links.get_key() == question.Id:
                             continue
                     break
-            print question.Title
+            links.reset()
             yield build, templates, title, publisher, question
-
+            
             if questions.next() == 0:
                 if questions.get_key() == 1:
                     continue
             break
-        answers.close()
-        questions.close()
-    pool = Pool(4)
-    pool.map(render_question, db_iter_questions(session), chunksize=1000)
+
+    pool = Pool(3, maxtasksperchild=100)
+    while True:
+        chunck = next(chunks(db_iter_questions(context), 3))
+        start = time()
+        pool.map(render_question, chunck)
     pool.close()
+
+    connection.close()
+
 
 def render_tags(templates, database, output, title, publisher, dump):
     print 'render tags'
@@ -842,10 +879,11 @@ if __name__ == '__main__':
         elif args['wiredtiger']:
             if args['load']:
                 print('* Running benchmark wiredtiger load')
-                dump = args['<work>']
-                database = os.path.join(dump, 'db')
+                work = args['<work>']
+                database = os.path.join(work, 'db')
 
-                connection = wiredtiger_open(database, "create")
+                config = "create,statistics=(fast),statistics_log=(wait=10,path=WiredTiger.%d.%H)"
+                connection = wiredtiger_open(database, config)
                 session = connection.open_session(None)
 
                 cursor = session.open_cursor('table:Post', None, None)
@@ -853,6 +891,14 @@ if __name__ == '__main__':
                 while cursor.next() == 0:
                     uid = cursor.get_key()
                     values = cursor.get_value()
+                    question = Post(uid, *values)
+                    build = os.path.join(work, 'build', 'question')
+                    templates = 'templates/'
+                    title = 'SuperUser'
+                    publisher = 'SE'
+                    pool = Pool(maxtasksperchild=1)
+                    # render_question((build, templates, title, publisher, question))
+                    
                 connection.close()
     elif args['run']:
         if not bin_is_present("zimwriterfs"):
