@@ -14,6 +14,7 @@ Options:
   --version     Show version.
 """
 import os
+from itertools import chain
 from time import sleep
 from time import time
 from collections import OrderedDict
@@ -38,7 +39,7 @@ from jinja2 import Environment
 from jinja2 import FileSystemLoader
 
 from lxml.etree import parse as string2xml
-from lxml.html import parse as html
+from lxml.html import parse as string2html
 from lxml.html import tostring as html2string
 
 from PIL import Image
@@ -419,8 +420,9 @@ def resize(filepath):
             # hardcoded size based on website layout
             try:
                 img = resizeimage.resize_width(img, 540, Image.ANTIALIAS)
-            except:
+            except Exception as exc:
                 print "Problem with image : " + filepath
+                print exc
         img.save(filepath, img.format)
 
 
@@ -442,49 +444,6 @@ def optimize(filepath):
         print('* unknown file extension %s' % filepath)
 
 
-def process(args):
-    images, filepaths, uid = args
-    count = len(filepaths)
-    print 'offlining start', uid
-    for index, filepath in enumerate(filepaths):
-        print 'offline %s/%s (%s)' % (index, count, uid)
-        try:
-            body = html(filepath)
-        except Exception as exc:  # error during xml parsing
-            print exc
-        else:
-            imgs = body.xpath('//img')
-            for img in imgs:
-                src = img.attrib['src']
-                ext = os.path.splitext(src)[1]
-                filename = sha1(src).hexdigest() + ext
-                out = os.path.join(images, filename)
-                # download the image only if it's not already downloaded
-                if not os.path.exists(out):
-                    try:
-                        download(src, out)
-                    except:
-                        # do nothing
-                        pass
-                    else:
-                        # update post's html
-                        src = '../static/images/' + filename
-                        img.attrib['src'] = src
-                        # finalize offlining
-                        try:
-                            resize(out)
-                            optimize(out)
-                        except:
-                            print "Something went wrong with" + out
-            # does the post contain images? if so, we surely modified
-            # its content so save it.
-            if imgs:
-                post = html2string(body)
-                with open(filepath, 'w') as f:
-                    f.write(post)
-    print 'offlining finished', uid
-
-
 def chunks(iterable, size):
     """Yield successive chunks of length size from iterable."""
     out = list()
@@ -499,33 +458,12 @@ def chunks(iterable, size):
                 break
             else:
                 out.append(value)
-        if end == True:
+        if end:
             yield out
             break
         else:
             yield out
             continue
-
-
-def offline(output, cores):
-    """offline, resize and reduce size of images"""
-    print 'offline images of %s using %s process...' % (output, cores)
-    images_path = os.path.join(output, 'static', 'images')
-    if not os.path.exists(images_path):
-        os.makedirs(images_path)
-
-    filepaths = os.path.join(output, 'question')
-    filepaths = map(lambda x: os.path.join(output, 'question', x), os.listdir(filepaths))  # noqa
-    filepaths_chunks = chunks(filepaths, len(filepaths) / cores)
-    filepaths_chunks = list(filepaths_chunks)
-
-    # start offlining
-    pool = Pool(cores)
-    # prepare a list of (images_path, filepaths_chunck) to feed
-    # `process` function via pool.map
-    args = zip([images_path]*cores, filepaths_chunks, range(cores))
-    print 'start offline process with', cores, 'cores'
-    pool.map(process, args)
 
 
 class Context(object):
@@ -595,7 +533,7 @@ def render_questions(work, title, publisher, cores):
     templates = os.path.abspath('templates')
     database = os.path.join(work, 'db')
     build = os.path.join(work, 'build', 'question')
-    # os.mkdir(build)
+    images = os.path.join(work, 'build', 'static', 'images')
     dump = os.path.join(work, 'dump')
     # prepare database
     connection = wiredtiger_open(database, "create")
@@ -640,6 +578,44 @@ def render_questions(work, title, publisher, cores):
                             continue
                     break
             links.reset()
+            # offline images
+            for post in chain([question], question.answers)):
+                try:
+                    body = string2html(post.Body)
+                except Exception as exc:  # error during xml parsing
+                    print exc
+                else:
+                    imgs = body.xpath('//img')
+                    dirty = False
+                    for img in imgs:
+                        src = img.attrib['src']
+                        ext = os.path.splitext(src)[1]
+                        filename = sha1(src).hexdigest() + ext
+                        out = os.path.join(images, filename)
+                        # download the image only if it's not already downloaded
+                        if os.path.exists(out):
+                            continue
+                        try:
+                            download(src, out)
+                        except Exception as exc:
+                            print exc
+                        else:
+                            # update post's html
+                            src = '../static/images/' + filename
+                            img.attrib['src'] = src
+                            # finalize offlining
+                            try:
+                                resize(out)
+                                optimize(out)
+                            except Exception as exc:
+                                print "Something went wrong with" + out
+                                print exc
+                            else:
+                                dirty = True
+                    if dirty:
+                        # XXX: here we do not save to the db the new body...
+                        post.Body = html2string(body)
+
             yield build, templates, title, publisher, question
 
             if questions.next() == 0:
