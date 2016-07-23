@@ -39,7 +39,7 @@ from jinja2 import Environment
 from jinja2 import FileSystemLoader
 
 from lxml.etree import parse as string2xml
-from lxml.html import parse as string2html
+from lxml.html import fromstring as string2html
 from lxml.html import tostring as html2string
 
 from PIL import Image
@@ -58,6 +58,9 @@ import subprocess
 from setproctitle import setproctitle
 
 setproctitle('sotoki')
+
+
+DEBUG = os.environ.get('DEBUG')
 
 # wiredtiger orm
 
@@ -547,6 +550,10 @@ def render_questions(work, title, publisher, cores):
         while True:
             question = questions.get_value()
             question = db_get_post(context, question)
+            # format tags
+            tags = question['Tags']
+            tags = tags[1:-1].split('><')
+            question.Tags = tags
             # get answers
             question.answers = list()
             answers = context.index_answer
@@ -579,10 +586,11 @@ def render_questions(work, title, publisher, cores):
                     break
             links.reset()
             # offline images
-            for post in chain([question], question.answers)):
+            for post in chain([question], question.answers):
                 try:
                     body = string2html(post.Body)
-                except Exception as exc:  # error during xml parsing
+                except Exception as exc:
+                    print 'string2html failed for post Id:{}'.format(post.Id)
                     print exc
                 else:
                     imgs = body.xpath('//img')
@@ -598,6 +606,7 @@ def render_questions(work, title, publisher, cores):
                         try:
                             download(src, out)
                         except Exception as exc:
+                            print 'download {} failed with:'.format(src)
                             print exc
                         else:
                             # update post's html
@@ -608,8 +617,7 @@ def render_questions(work, title, publisher, cores):
                                 resize(out)
                                 optimize(out)
                             except Exception as exc:
-                                print "Something went wrong with" + out
-                                print exc
+                                print "resize or optimize failed with", exc
                             else:
                                 dirty = True
                     if dirty:
@@ -624,8 +632,10 @@ def render_questions(work, title, publisher, cores):
             break
 
     pool = Pool(cores, maxtasksperchild=100)
-    for chunk in chunks(db_iter_questions(context), cores):
+    for i, chunck in enumerate(chunks(db_iter_questions(context), cores)):
         pool.map(render_question, chunck)
+        if DEBUG and i == 10:  # debug
+            break
     pool.close()
 
     connection.close()
@@ -865,10 +875,9 @@ if __name__ == '__main__':
                     values = cursor.get_value()
                 connection.close()
 
-    Elif args['load']:
+    elif args['load']:
         load(args['<work>'])
     elif args['render']:
         if args['questions']:
             cores = cpu_count() - 1 or 1
             render_questions(args['<work>'], args['<title>'], args['<publisher>'], cores)
-            cursor.close()
