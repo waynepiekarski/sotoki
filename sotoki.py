@@ -2,7 +2,6 @@
 """sotoki.
 
 Usage:
-  sotoki.py run <url> <publisher> [--directory=<dir>]
   sotoki.py load <work>
   sotoki.py render questions <work> <title> <publisher>
   sotoki.py benchmark xml load <work>
@@ -13,7 +12,6 @@ Usage:
 Options:
   -h --help     Show this screen.
   --version     Show version.
-  --directory=<dir>   Specify a directory for xml files [default: work/dump/]
 """
 import os
 from time import sleep
@@ -591,7 +589,7 @@ def render_question(args):
     )
 
 
-def render_questions(work, title, publisher):
+def render_questions(work, title, publisher, cores):
     print 'render questions'
     # prepare paths
     templates = os.path.abspath('templates')
@@ -649,10 +647,8 @@ def render_questions(work, title, publisher):
                     continue
             break
 
-    pool = Pool(3, maxtasksperchild=100)
-    while True:
-        chunck = next(chunks(db_iter_questions(context), 3))
-        start = time()
+    pool = Pool(cores, maxtasksperchild=100)
+    for chunk in chunks(db_iter_questions(context), cores):
         pool.map(render_question, chunck)
     pool.close()
 
@@ -913,7 +909,6 @@ if __name__ == '__main__':
         templates = 'templates'
         output = os.path.join('work', 'output')
         os.makedirs(output)
-        cores = cpu_count() / 2 or 1
         title, description = grab_title_description_favicon(url, output)
         render_questions(templates, database, output, title, publisher, dump, cores)
         render_tags(templates, database, output, title, publisher, dump)
@@ -927,5 +922,6 @@ if __name__ == '__main__':
         load(args['<work>'])
     elif args['render']:
         if args['questions']:
-            render_questions(args['<work>'], args['<title>'], args['<publisher>'])
+            cores = cpu_count() - 1 or 1
+            render_questions(args['<work>'], args['<title>'], args['<publisher>'], cores)
             cursor.close()
