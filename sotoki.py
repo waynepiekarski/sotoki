@@ -5,6 +5,7 @@ Usage:
   sotoki.py load <work>
   sotoki.py render questions <work> <title> <publisher>
   sotoki.py render users <work> <title> <publisher>
+  sotoki.py render tags <work> <title> <publisher>
   sotoki.py benchmark xml load <work>
   sotoki.py benchmark wiredtiger load <work>
   sotoki.py (-h | --help)
@@ -320,6 +321,12 @@ class Tag(Element):
 
     indices = [TagName]
 
+class TagPost(Element):
+    TagName = String()
+    PostId = Integer()
+
+    indices = [TagName]
+
 # load
 
 def iterate(filepath):
@@ -338,8 +345,43 @@ def load(work):
     # prepare wiredtiger
     connection = wiredtiger_open(db, "create")
     session = connection.open_session(None)
+    # load Post and TagPost
+    filepath = os.path.join(dump, Post.filename())
+    print('* loading {}'.format(filepath))
+    # create post table
+    session.create(Post.table(), Post.format())
+    for index, columns in Post.indices_format():
+        session.create(index, columns)
+    # create TagPost table
+    session.create(TagPost.table(), TagPost.format())
+    for index, columns in TagPost.indices_format():
+        session.create(index, columns)
+    # process
+    cursor_post = session.open_cursor(Post.table(), None, None)
+    cursor_tag = session.open_cursor(TagPost.table(), None, None)
+    uid = 1  # FIXME: This can be done by wiredtiger, requires to fix the ORM
+    for data in iterate(filepath):
+        # store Post
+        post = Post(**data)
+        cursor_post.set_key(*post.keys())
+        cursor_post.set_value(*post.values())
+        cursor_post.insert()
+        # store TagPost
+        try:
+            tags = post.Tags[1:-1].split('><')
+        except KeyError:
+            pass
+        else:
+            for tag in tags:
+                cursor_tag.set_key(uid)
+                cursor_tag.set_value(tag, post.Id)
+                cursor_tag.insert()
+                uid += 1
+    cursor_post.close()
+    cursor_tag.close()
 
-    for klass in [Badge, Comment, Post, PostLink, User, Tag]:
+    # load others
+    for klass in [Badge, Comment, PostLink, User, Tag]:
         filepath = os.path.join(dump, klass.filename())
         print('* loading {}'.format(filepath))
         session.create(klass.table(), klass.format())
@@ -477,12 +519,14 @@ class Context(object):
 
     def __init__(self, session):
         self.table_comment = session.open_cursor('table:Comment', None, None)
+        self.table_tag = session.open_cursor('table:Tag', None, None)
         self.table_user = session.open_cursor('table:User', None, None)
         self.table_post = session.open_cursor('table:Post', None, None)
         self.index_comment = session.open_cursor('index:Comment:PostId(Id)', None, None)
         self.index_question = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
         self.index_answer = session.open_cursor('index:Post:ParentId(Id)', None, None)
         self.index_link = session.open_cursor('index:PostLink:PostId(RelatedPostId)', None, None)
+        self.index_tagpost = session.open_cursor('index:TagPost:TagName(PostId)', None, None)        
 
 
 def db_get_comment(context, uid):
@@ -646,17 +690,34 @@ def render_questions(work, title, publisher, cores):
     connection.close()
 
 
-def render_tags(templates, database, output, title, publisher, dump):
+def render_tags(work, title, publisher, cores):
+    # FIXME: use pool.map
     print 'render tags'
-    # index page
-    db = os.path.join(database, 'se-dump.db')
-    conn = sqlite3.connect(db)
-    conn.row_factory = dict_factory
-    cursor = conn.cursor()
+    # prepare paths
+    templates = os.path.abspath('templates')
+    database = os.path.join(work, 'db')
+    build = os.path.join(work, 'build')
+    # prepare database
+    connection = wiredtiger_open(database, "create")
+    session = connection.open_session(None)
+    context = Context(session)
 
-    tags = cursor.execute("SELECT TagName FROM tags ORDER BY TagName").fetchall()
+    tagpost = context.index_tagpost
+    
+    # render index page
+    tags = list()
+    cursor = context.table_tag
+    while cursor.next() == 0:
+        uid = cursor.get_key()
+        values = cursor.get_value()
+        tag = Tag(uid, *values)
+        tags.append(tag)
+    cursor.reset()
+
+    tags.sort(key=lambda x: x.TagName)
+
     jinja(
-        os.path.join(output, 'index.html'),
+        os.path.join(build, 'index.html'),
         'tags.html',
         templates,
         tags=tags,
@@ -664,43 +725,57 @@ def render_tags(templates, database, output, title, publisher, dump):
         title=title,
         publisher=publisher,
     )
-    # tag page
-    print "Render tag page"
-    list_tag = map(lambda d: d['TagName'], tags)
-    os.makedirs(os.path.join(output, 'tag'))
-    for tag in list(set(list_tag)):
-        dirpath = os.path.join(output, 'tag')
-        tagpath = os.path.join(dirpath, '%s' % tag)
-        os.makedirs(tagpath)
-        print tagpath
+
+    # render tag page using pagination
+    tags = [tag.TagName for tag in tags]
+    try:
+        os.makedirs(os.path.join(build, 'tag'))
+    except:
+        pass
+    
+    for i, tag in enumerate(tags):
+        print 'rendering `{}` tag pages'.format(tag)
+        dirpath = os.path.join(build, 'tag')
+        tagpath = os.path.join(dirpath, tag)
+        try:
+            os.makedirs(tagpath)
+        except:
+            pass
         # build page using pagination
-        offset = 0
-        page = 1
-        while offset is not None:
+        # FIXME: support true next page
+        questions = list()
+        tagpost.set_key(tag)
+        tagpost.search()
+        while True:
+            uid = tagpost.get_value()
+            question = db_get_post(context, uid)
+            questions.append(question)
+
+            if tagpost.next() == 0:
+                if  tagpost.get_key() == tag:
+                    continue
+            break
+        questions.sort(key=lambda x: x.Score)
+
+        for page, chunk in enumerate(chunks(iter(questions), 10)):
             fullpath = os.path.join(tagpath, '%s.html' % page)
-            questions = cursor.execute("SELECT * FROM questiontag WHERE Tag = ? LIMIT 11 OFFSET ? ", (str(tag), offset,)).fetchall()
-            try:
-                questions[10]
-            except IndexError:
-                offset = None
-            else:
-                offset += 10
-            questions = questions[:10]
             jinja(
                 fullpath,
                 'tag.html',
-                templates,
+                'templates',
                 tag=tag,
                 index=page,
                 questions=questions,
                 rooturl="../..",
-                hasnext=bool(offset),
+                hasnext=True,  # FIXME
                 next=page + 1,
                 title=title,
                 publisher=publisher,
             )
-            page += 1
-    conn.close()
+        if DEBUG and i == 100:
+            break
+
+    connection.close()
 
 def render_user(args):
     user, generator, build, title, publisher = args
@@ -921,6 +996,9 @@ if __name__ == '__main__':
         if args['questions']:
             cores = cpu_count() - 1 or 1
             render_questions(args['<work>'], args['<title>'], args['<publisher>'], cores)
-        if args['users']:
+        elif args['users']:
             cores = cpu_count() - 1 or 1
             render_users(args['<work>'], args['<title>'], args['<publisher>'], cores)
+        elif args['tags']:
+            cores = cpu_count() - 1 or 1
+            render_tags(args['<work>'], args['<title>'], args['<publisher>'], cores)
