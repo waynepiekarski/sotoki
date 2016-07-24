@@ -11,7 +11,7 @@
   <div class="row">
     <div class="col-md-3">
       <div> 
-        <img src="../static/identicon/{{ user["DisplayName"] | slugify }}.png" /> 
+        <img src="{{ rooturl }}/static/identicon/{{ user.pseudo() | slugify }}.png" /> 
       </div> 
       <p class="reputation"><span>{{ user["Reputation"] | intspace }}</span> reputation</p>
     </div>

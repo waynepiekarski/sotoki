@@ -4,6 +4,7 @@
 Usage:
   sotoki.py load <work>
   sotoki.py render questions <work> <title> <publisher>
+  sotoki.py render users <work> <title> <publisher>
   sotoki.py benchmark xml load <work>
   sotoki.py benchmark wiredtiger load <work>
   sotoki.py (-h | --help)
@@ -308,6 +309,9 @@ class User(Element):
     AccountId = Integer()
     ProfileImageUrl = String()
 
+    def pseudo(self):
+        return u'{} {}'.format(self.Id, self.DisplayName)
+
 class Tag(Element):
     Count = Integer()
     WikiPostId = Integer()
@@ -473,6 +477,7 @@ class Context(object):
 
     def __init__(self, session):
         self.table_comment = session.open_cursor('table:Comment', None, None)
+        self.table_user = session.open_cursor('table:User', None, None)
         self.table_post = session.open_cursor('table:Post', None, None)
         self.index_comment = session.open_cursor('index:Comment:PostId(Id)', None, None)
         self.index_question = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
@@ -543,7 +548,7 @@ def render_questions(work, title, publisher, cores):
     session = connection.open_session(None)
     context = Context(session)
 
-    def db_iter_questions(context):
+    def db_iter_questions():
         questions = context.index_question
         questions.set_key(1)
         questions.search()
@@ -632,8 +637,8 @@ def render_questions(work, title, publisher, cores):
             break
 
     pool = Pool(cores, maxtasksperchild=100)
-    for i, chunck in enumerate(chunks(db_iter_questions(context), cores)):
-        pool.map(render_question, chunck)
+    for i, chunk in enumerate(chunks(db_iter_questions(), cores)):
+        pool.map(render_question, chunk)
         if DEBUG and i == 10:  # debug
             break
     pool.close()
@@ -697,19 +702,58 @@ def render_tags(templates, database, output, title, publisher, dump):
             page += 1
     conn.close()
 
+def render_user(args):
+    user, generator, build, title, publisher = args
+    username = slugify(user.pseudo())
 
-def render_users(templates, database, output, title, publisher, dump):
+    # Generate big identicon
+    padding = (20, 20, 20, 20)
+    identicon = generator.generate(username, 164, 164, padding=padding, output_format="png")  # noqa
+    filename = username + '.png'
+    fullpath = os.path.join(build, 'static', 'identicon', filename)
+    with open(fullpath, "wb") as f:
+        f.write(identicon)
+
+    # Generate small identicon
+    padding = [0] * 4  # no padding
+    identicon = generator.generate(username, 32, 32, padding=padding, output_format="png")  # noqa
+    filename = username + '.small.png'
+    fullpath = os.path.join(build, 'static', 'identicon', filename)
+
+    with open(fullpath, "wb") as f:
+        f.write(identicon)
+
+    # generate user profile page
+    filename = '%s.html' % username
+    fullpath = os.path.join(build, 'user', filename)
+    jinja(
+        fullpath,
+        'user.html',
+        'templates',
+        user=user,
+        title=title,
+        publisher=publisher,
+        rooturl='..',
+    )
+
+
+def render_users(work, title, publisher, cores):
     print 'render users'
-    os.makedirs(os.path.join(output, 'user'))
-    db = os.path.join(database, 'se-dump.db')
-    conn = sqlite3.connect(db)
-    conn.row_factory = dict_factory
-    cursor = conn.cursor()
-    users = cursor.execute("""SELECT * FROM users""").fetchall()
+    templates = 'templates'
+    database = os.path.join(work, 'db')
+    build = os.path.join(work, 'build')
+    try:
+        os.makedirs(os.path.join(build, 'user'))
+    except:
+        pass
 
     # Prepare identicon generation
-    identicon_path = os.path.join(output, 'static', 'identicon')
-    os.makedirs(identicon_path)
+    identicon_path = os.path.join(build, 'static', 'identicon')
+    try:
+        os.makedirs(identicon_path)
+    except:
+        pass
+
     # Set-up a list of foreground colours (taken from Sigil).
     foreground = [
         "rgb(45,79,255)",
@@ -727,36 +771,32 @@ def render_users(templates, database, output, title, publisher, dump):
     # using SHA1 digest.
     generator = pydenticon.Generator(5, 5, foreground=foreground, background=background)  # noqa
 
-    for user in users:
-        username = slugify(user["DisplayName"])
+    connection = wiredtiger_open(database, "create")
+    session = connection.open_session(None)
+    context = Context(session)
 
-        # Generate big identicon
-        padding = (20, 20, 20, 20)
-        identicon = generator.generate(username, 164, 164, padding=padding, output_format="png")  # noqa
-        filename = username + '.png'
-        fullpath = os.path.join(output, 'static', 'identicon', filename)
-        with open(fullpath, "wb") as f:
-            f.write(identicon)
+    def db_iter_users():
+        cursor = context.table_user
+        cursor.reset()
+        while cursor.next() == 0:
+            uid = cursor.get_key()
+            values = cursor.get_value()
+            user = User(uid, *values)
 
-        # Generate small identicon
-        padding = [0] * 4  # no padding
-        identicon = generator.generate(username, 32, 32, padding=padding, output_format="png")  # noqa
-        filename = username + '.small.png'
-        fullpath = os.path.join(output, 'static', 'identicon', filename)
-        with open(fullpath, "wb") as f:
-            f.write(identicon)
+            yield user, generator, build, title, publisher
 
-        # generate user profile page
-        filename = '%s.html' % username
-        fullpath = os.path.join(output, 'user', filename)
-        jinja(
-            fullpath,
-            'user.html',
-            templates,
-            user=user,
-            title=title,
-            publisher=publisher,
-        )
+            if cursor.next() == 0:
+                continue
+            else:
+                break
+
+    pool = Pool(cores, maxtasksperchild=100)
+    for i, chunk in enumerate(chunks(db_iter_users(), cores)):
+        pool.map(render_user, chunk)
+        if DEBUG and i == 1000:
+            break
+    pool.close()
+    connection.close()
 
 
 def grab_title_description_favicon(url, output_dir):
@@ -881,3 +921,6 @@ if __name__ == '__main__':
         if args['questions']:
             cores = cpu_count() - 1 or 1
             render_questions(args['<work>'], args['<title>'], args['<publisher>'], cores)
+        if args['users']:
+            cores = cpu_count() - 1 or 1
+            render_users(args['<work>'], args['<title>'], args['<publisher>'], cores)
