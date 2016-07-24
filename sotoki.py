@@ -2,6 +2,7 @@
 """sotoki.
 
 Usage:
+  sotoki.py run <work> <url> <title> <publisher>
   sotoki.py load <work>
   sotoki.py render questions <work> <title> <publisher>
   sotoki.py render users <work> <title> <publisher>
@@ -526,7 +527,7 @@ class Context(object):
         self.index_question = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
         self.index_answer = session.open_cursor('index:Post:ParentId(Id)', None, None)
         self.index_link = session.open_cursor('index:PostLink:PostId(RelatedPostId)', None, None)
-        self.index_tagpost = session.open_cursor('index:TagPost:TagName(PostId)', None, None)        
+        self.index_tagpost = session.open_cursor('index:TagPost:TagName(PostId)', None, None)
 
 
 def db_get_comment(context, uid):
@@ -591,6 +592,19 @@ def render_questions(work, title, publisher, cores):
     connection = wiredtiger_open(database, "create")
     session = connection.open_session(None)
     context = Context(session)
+
+    try:
+        os.makedirs(os.path.join(work, 'build', 'question'))
+    except:
+        pass
+    try:
+        os.makedirs(os.path.join(work, 'build', 'static', 'images'))
+    except:
+        pass
+    try:
+        os.makedirs(os.path.join(work, 'build', 'static', 'identicon'))
+    except:
+        pass
 
     def db_iter_questions():
         questions = context.index_question
@@ -718,7 +732,7 @@ def render_tags(work, title, publisher, cores):
     context = Context(session)
 
     tagpost = context.index_tagpost
-    
+
     # render index page
     tags = list()
     cursor = context.table_tag
@@ -907,18 +921,17 @@ def exec_cmd(cmd):
     return envoy.run(str(cmd.encode('utf-8'))).status_code
 
 
-def create_zims(title, publisher, description):
+def create_zims(work, title, publisher, description):
     print 'Creating ZIM files'
     # Check, if the folder exists. Create it, if it doesn't.
     lang_input = "en"
-    html_dir = os.path.join("work", "output")
+    html_dir = os.path.join(work, "build")
     zim_path = dict(
         title=title.lower(),
         lang=lang_input,
         date=datetime.datetime.now().strftime('%Y-%m')
     )
-#    zim_path = "work/", "{title}_{lang}_all_{date}.zim".format(**zim_path)
-    zim_path = os.path.join("work/", "{title}_{lang}_all_{date}.zim".format(**zim_path))
+    zim_path = os.path.join(work, "{title}_{lang}_all_{date}.zim".format(**zim_path))
 
     title = title.replace("-", " ")
     creator = title
@@ -969,7 +982,30 @@ def bin_is_present(binary):
 
 if __name__ == '__main__':
     args = docopt(__doc__, version='sotoki 0.3')
-    if args['benchmark']:
+    if args['run']:
+        if not bin_is_present("zimwriterfs"):
+            sys.exit("zimwriterfs is not available, please install it.")
+        cores = cpu_count() - 1 or 1
+        work = args['<work>']
+        url = args['<url>']
+        publisher = args['<publisher>']
+        # load dump into database
+        load(work)
+        # render templates into `output`
+        templates = 'templates'
+        build = os.path.join('work', 'build')
+        try:
+            os.makedirs(build)
+        except:
+            pass
+        title, description = grab_title_description_favicon(url, build)
+        render_questions(work, title, publisher, cores)
+        render_tags(work, title, publisher, cores)
+        render_users(work, title, publisher, cores)
+        # copy static
+        copy_tree('static', os.path.join(work, 'build', 'static'))
+        create_zims(work, title, publisher, description)
+    elif args['benchmark']:
         if args['xml']:
             if args['load']:
                 print('* Running benchmark xml load')
@@ -980,7 +1016,6 @@ if __name__ == '__main__':
                     print('** loading {}'.format(filepath))
                     for data in iterate(filepath):
                         obj = klass(**data)
-
         elif args['wiredtiger']:
             if args['load']:
                 print('* Running benchmark wiredtiger load')
@@ -997,7 +1032,6 @@ if __name__ == '__main__':
                     uid = cursor.get_key()
                     values = cursor.get_value()
                 connection.close()
-
     elif args['load']:
         load(args['<work>'])
     elif args['render']:
