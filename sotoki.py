@@ -201,9 +201,9 @@ class Element(object):
 
     @classmethod
     def indices_format(cls):
-        for index in getattr(cls, 'indices', list()):
-            table = 'index:{}:{}'.format(cls.__name__, index.name)
-            columns = 'columns=({})'.format(index.name)
+        for name, columns in getattr(cls, 'indices', dict()).items():
+            table = 'index:{}:{}'.format(cls.__name__, key)
+            columns = 'columns=({})'.format(','.join([column.name for column in columns]))
             yield table, columns
 
     @classmethod
@@ -244,7 +244,7 @@ class Badge(Element):
     TagBased = Boolean()
     Class = Integer()
 
-    indices = [UserId]
+    indices = {'UserId': [UserId]}
 
 
 class Comment(Element):
@@ -255,7 +255,7 @@ class Comment(Element):
     CreationDate = DateTime()
     UserId = Integer()
 
-    indices = [PostId]
+    indices = {'PostId': [PostId, CreationDate]}
 
 
 class Post(Element):
@@ -280,7 +280,8 @@ class Post(Element):
     CommentCount = Integer()
     FavoriteCount = Integer()
 
-    indices = [PostTypeId, ParentId]
+    indices = {'PostTypeId': [PostTypeId],
+               'Answers': [ParentId, Score]}
 
     def pseudo(self):
         return u'{} {}'.format(self.Id, self.Title)
@@ -292,7 +293,7 @@ class PostLink(Element):
     RelatedPostId = Integer()
     LinkTypeId = Integer()  # 1 Link, 3 Duplicate
 
-    indices = [PostId]
+    indices = {'PostId': [PostId]}
 
 class User(Element):
     Reputation = Integer()
@@ -320,13 +321,13 @@ class Tag(Element):
     TagName = String()
     ExcerptPostId = Integer()
 
-    indices = [TagName]
+    indices = {'TagName': [TagName]}
 
 class TagPost(Element):
     TagName = String()
     PostId = Integer()
 
-    indices = [TagName]
+    indices = {'TagName': [TagName]}
 
 # load
 
@@ -525,7 +526,7 @@ class Context(object):
         self.table_post = session.open_cursor('table:Post', None, None)
         self.index_comment = session.open_cursor('index:Comment:PostId(Id)', None, None)
         self.index_question = session.open_cursor('index:Post:PostTypeId(Id)', None, None)
-        self.index_answer = session.open_cursor('index:Post:ParentId(Id)', None, None)
+        self.index_answer = session.open_cursor('index:Post:Answers(Id)', None, None)
         self.index_link = session.open_cursor('index:PostLink:PostId(RelatedPostId)', None, None)
         self.index_tagpost = session.open_cursor('index:TagPost:TagName(PostId)', None, None)
 
@@ -559,7 +560,6 @@ def db_get_post(context, uid):
                 if index.get_key() == post.Id:
                     continue
             break
-        post.comments.sort(key=lambda c: c.CreationDate)
     index.reset()
     posts.reset()
     return post
@@ -567,6 +567,7 @@ def db_get_post(context, uid):
 
 def render_question(args):
     build, templates, title, publisher, question = args
+    questions.answers = question.answers.reversed()
     filename = slugify(question.pseudo()) + '.html'
     filepath = os.path.join(build, filename)
     jinja(
@@ -630,7 +631,6 @@ def render_questions(work, title, publisher, cores):
                         if answers.get_key() == question.Id:
                             continue
                     break
-                question.answers.sort(key= lambda p: p.Score, reverse=True)
             answers.reset()
             # get links
             question.links = list()
@@ -705,6 +705,7 @@ def render_questions(work, title, publisher, cores):
 
 def render_tag(args):
     fullpath, tag, page, questions, title, publisher = args
+    questions.sort(key=lambda x: x.Score, reverse=True)
     jinja(
         fullpath,
         'tag.html',
@@ -785,7 +786,6 @@ def render_tags(work, title, publisher, cores):
                     if  tagpost.get_key() == tag:
                         continue
                 break
-            questions.sort(key=lambda x: x.Score)
 
             for page, chunk in enumerate(chunks(iter(questions), 10)):
                 fullpath = os.path.join(tagpath, '%s.html' % page)
