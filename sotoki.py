@@ -567,7 +567,7 @@ def db_get_post(context, uid):
 
 def render_question(args):
     build, templates, title, publisher, question = args
-    questions.answers = question.answers.reversed()
+    questions.answers = reversed(question.answers)
     filename = slugify(question.pseudo()) + '.html'
     filepath = os.path.join(build, filename)
     jinja(
