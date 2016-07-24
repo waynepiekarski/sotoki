@@ -549,7 +549,7 @@ def db_get_post(context, uid):
     post = Post(uid, *post)
     # get comments
     index = context.index_comment
-    index.set_key(post.Id)
+    index.set_key(post.Id, '')
     post.comments = list()
     if index.search() == 0:
         while True:
@@ -621,7 +621,7 @@ def render_questions(work, title, publisher, cores):
             # get answers
             question.answers = list()
             answers = context.index_answer
-            answers.set_key(question.Id)
+            answers.set_key(question.Id, 0)
             if answers.search() == 0:
                 while True:
                     answer = answers.get_value()
