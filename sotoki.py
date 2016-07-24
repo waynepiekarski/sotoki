@@ -202,7 +202,7 @@ class Element(object):
     @classmethod
     def indices_format(cls):
         for name, columns in getattr(cls, 'indices', dict()).items():
-            table = 'index:{}:{}'.format(cls.__name__, key)
+            table = 'index:{}:{}'.format(cls.__name__, name)
             columns = 'columns=({})'.format(','.join([column.name for column in columns]))
             yield table, columns
 
