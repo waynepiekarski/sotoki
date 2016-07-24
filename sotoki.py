@@ -985,7 +985,7 @@ if __name__ == '__main__':
     if args['run']:
         if not bin_is_present("zimwriterfs"):
             sys.exit("zimwriterfs is not available, please install it.")
-        cores = cpu_count() - 1 or 1
+        cores = cpu_count() / 2 or 1
         work = args['<work>']
         url = args['<url>']
         publisher = args['<publisher>']
