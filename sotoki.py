@@ -689,6 +689,21 @@ def render_questions(work, title, publisher, cores):
 
     connection.close()
 
+def render_tag(args):
+    fullpath, tag, page, questions, title, publisher = args
+    jinja(
+        fullpath,
+        'tag.html',
+        'templates',
+        tag=tag,
+        index=page,
+        questions=questions,
+        rooturl="../..",
+        hasnext=True,  # FIXME
+        next=page + 1,
+        title=title,
+        publisher=publisher,
+    )
 
 def render_tags(work, title, publisher, cores):
     # FIXME: use pool.map
@@ -732,49 +747,42 @@ def render_tags(work, title, publisher, cores):
         os.makedirs(os.path.join(build, 'tag'))
     except:
         pass
-    
-    for i, tag in enumerate(tags):
-        print 'rendering `{}` tag pages'.format(tag)
-        dirpath = os.path.join(build, 'tag')
-        tagpath = os.path.join(dirpath, tag)
-        try:
-            os.makedirs(tagpath)
-        except:
-            pass
-        # build page using pagination
-        # FIXME: support true next page
-        questions = list()
-        tagpost.set_key(tag)
-        tagpost.search()
-        while True:
-            uid = tagpost.get_value()
-            question = db_get_post(context, uid)
-            questions.append(question)
 
-            if tagpost.next() == 0:
-                if  tagpost.get_key() == tag:
-                    continue
-            break
-        questions.sort(key=lambda x: x.Score)
+    def iter_tags():
+        for i, tag in enumerate(tags):
+            print 'rendering `{}` tag pages'.format(tag)
+            dirpath = os.path.join(build, 'tag')
+            tagpath = os.path.join(dirpath, tag)
+            try:
+                os.makedirs(tagpath)
+            except:
+                pass
+            # build page using pagination
+            # FIXME: support true next page
+            questions = list()
+            tagpost.set_key(tag)
+            tagpost.search()
+            while True:
+                uid = tagpost.get_value()
+                question = db_get_post(context, uid)
+                questions.append(question)
 
-        for page, chunk in enumerate(chunks(iter(questions), 10)):
-            fullpath = os.path.join(tagpath, '%s.html' % page)
-            jinja(
-                fullpath,
-                'tag.html',
-                'templates',
-                tag=tag,
-                index=page,
-                questions=questions,
-                rooturl="../..",
-                hasnext=True,  # FIXME
-                next=page + 1,
-                title=title,
-                publisher=publisher,
-            )
+                if tagpost.next() == 0:
+                    if  tagpost.get_key() == tag:
+                        continue
+                break
+            questions.sort(key=lambda x: x.Score)
+
+            for page, chunk in enumerate(chunks(iter(questions), 10)):
+                fullpath = os.path.join(tagpath, '%s.html' % page)
+                yield fullpath, tag, page, chunk, title, publisher
+
+    pool = Pool(maxtasksperchild=cores)
+    for i, chunk in enumerate(chunks(iter_tags(), cores)):
+        pool.map(render_tag, chunk)
         if DEBUG and i == 100:
             break
-
+    pool.close()
     connection.close()
 
 def render_user(args):
