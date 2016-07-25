@@ -585,6 +585,46 @@ def render_question(args):
     question.answers = reversed(question.answers)
     filename = slugify(question.pseudo()) + '.html'
     filepath = os.path.join(build, filename)
+
+    # offline images
+    for post in chain([question], question.answers):
+        try:
+            body = string2html(post.Body)
+        except Exception as exc:
+            print 'string2html failed for post Id:{}'.format(post.Id)
+            print exc
+        else:
+            imgs = body.xpath('//img')
+            dirty = False
+            for img in imgs:
+                src = img.attrib['src']
+                ext = os.path.splitext(src)[1]
+                filename = sha1(src).hexdigest() + ext
+                out = os.path.join(images, filename)
+                # download the image only if it's not already downloaded
+                if os.path.exists(out):
+                    continue
+                try:
+                    download(src, out)
+                except Exception as exc:
+                    print 'download {} failed with:'.format(src)
+                    print exc
+                else:
+                    # update post's html
+                    src = '../static/images/' + filename
+                    img.attrib['src'] = src
+                    # finalize offlining
+                    try:
+                        resize(out)
+                        optimize(out)
+                    except Exception as exc:
+                        print "resize or optimize of {} failed".format(src)
+                        print exc
+                    else:
+                        dirty = True
+            if dirty:
+                post.Body = html2string(body)
+
     jinja(
         filepath,
         'question.html',
@@ -663,44 +703,6 @@ def render_questions(work, title, publisher, cores):
                             continue
                     break
             links.reset()
-            # offline images
-            for post in chain([question], question.answers):
-                try:
-                    body = string2html(post.Body)
-                except Exception as exc:
-                    print 'string2html failed for post Id:{}'.format(post.Id)
-                    print exc
-                else:
-                    imgs = body.xpath('//img')
-                    dirty = False
-                    for img in imgs:
-                        src = img.attrib['src']
-                        ext = os.path.splitext(src)[1]
-                        filename = sha1(src).hexdigest() + ext
-                        out = os.path.join(images, filename)
-                        # download the image only if it's not already downloaded
-                        if os.path.exists(out):
-                            continue
-                        try:
-                            download(src, out)
-                        except Exception as exc:
-                            print 'download {} failed with:'.format(src)
-                            print exc
-                        else:
-                            # update post's html
-                            src = '../static/images/' + filename
-                            img.attrib['src'] = src
-                            # finalize offlining
-                            try:
-                                resize(out)
-                                optimize(out)
-                            except Exception as exc:
-                                print "resize or optimize failed with", exc
-                            else:
-                                dirty = True
-                    if dirty:
-                        # XXX: here we do not save to the db the new body...
-                        post.Body = html2string(body)
 
             yield build, templates, title, publisher, question
 
