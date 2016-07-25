@@ -65,6 +65,21 @@ setproctitle('sotoki')
 
 DEBUG = os.environ.get('DEBUG')
 
+
+# multiprocessing helper
+
+class Worker(Process):
+    
+    def __init__(self, queue, function):
+        super(Worker, self).__init__()
+        self.queue = queue
+        self.function = function
+
+    def run(self):
+        function = self.function
+        for args in iter(self.queue.get, None):
+            function(args)
+
 # wiredtiger orm
 
 # Generic declarative API. Does not support references/fk
@@ -694,12 +709,23 @@ def render_questions(work, title, publisher, cores):
                     continue
             break
 
-    pool = Pool(cores, maxtasksperchild=100)
-    for i, chunk in enumerate(chunks(db_iter_questions(), cores)):
-        pool.map(render_question, chunk)
+    queue = Queue()
+    workers = list()
+    for i in range(cores):
+        worker = Worker(queue, render_question)
+        workers.append(worker)
+        worker.start()
+
+    for i, args in enumerate(db_iter_questions()):
+        queue.put(args)
         if DEBUG and i == 10:  # debug
             break
-    pool.close()
+
+    for worker in workers:
+        queue.put(None)
+        
+    for worker in workers:
+        worker.join()
 
     connection.close()
 
@@ -791,12 +817,24 @@ def render_tags(work, title, publisher, cores):
                 fullpath = os.path.join(tagpath, '%s.html' % page)
                 yield fullpath, tag, page, chunk, title, publisher
 
-    pool = Pool(maxtasksperchild=cores)
-    for i, chunk in enumerate(chunks(iter_tags(), cores)):
-        pool.map(render_tag, chunk)
-        if DEBUG and i == 100:
+    queue = Queue()
+    workers = list()
+    for i in range(cores):
+        worker = Worker(queue, render_tag)
+        workers.append(worker)
+        worker.start()
+
+    for i, args in enumerate(iter_tags()):
+        queue.put(args)
+        if DEBUG and i == 10:  # debug
             break
-    pool.close()
+
+    for worker in workers:
+        queue.put(None)
+
+    for worker in workers:
+        worker.join()
+
     connection.close()
 
 def render_user(args):
@@ -887,12 +925,24 @@ def render_users(work, title, publisher, cores):
             else:
                 break
 
-    pool = Pool(cores, maxtasksperchild=100)
-    for i, chunk in enumerate(chunks(db_iter_users(), cores)):
-        pool.map(render_user, chunk)
-        if DEBUG and i == 1000:
+    queue = Queue()
+    workers = list()
+    for i in range(cores):
+        worker = Worker(queue, render_user)
+        workers.append(worker)
+        worker.start()
+
+    for i, args in enumerate(db_iter_users()):
+        queue.put(args)
+        if DEBUG and i == 10:  # debug
             break
-    pool.close()
+
+    for worker in workers:
+        queue.put(None)
+
+    for worker in workers:
+        worker.join()
+
     connection.close()
 
 
@@ -985,7 +1035,7 @@ if __name__ == '__main__':
     if args['run']:
         # if not bin_is_present("zimwriterfs"):
         #     sys.exit("zimwriterfs is not available, please install it.")
-        cores = cpu_count() / 2 or 1
+        cores = cpu_count() - 1 or 1
         work = args['<work>']
         url = args['<url>']
         publisher = args['<publisher>']
