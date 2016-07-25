@@ -37,11 +37,15 @@
           <h3>Related</h3>    
           <ul>    
             {% for link in question["links"] %}    
-              <li><a href="{{ rooturl }}/question/{{ link.pseudo() | slugify }}.html" >{{ link.Title }}<a></li> 
+              <li>
+                <a href="{{ rooturl }}/question/{{ link.pseudo() | slugify }}.html">
+                  {{ link.Title }}
+                </a>
+              </li> 
             {% endfor %}    
-            <ul>    
+          </ul>    
         </div>    
-    {% endif %}    
+    {% endif %}
     </div>
   </div>
   <script src="/static/main.js"></script>

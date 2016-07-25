@@ -555,6 +555,16 @@ def db_get_comment(context, uid):
     cursor.reset()
     return comment
 
+def db_get_user(context, uid):
+    cursor = context.table_user
+    cursor.set_key(uid)
+    if cursor.search() == 0:
+        user = User(uid, *cursor.get_value())
+        cursor.reset()
+        return user
+    else:
+        return None
+
 def db_get_post(context, uid):
     posts = context.table_post
     posts.set_key(uid)
@@ -575,6 +585,8 @@ def db_get_post(context, uid):
                 if index.get_key() == post.Id:
                     continue
             break
+    if post.OwnerUserId:
+        post.OwnerUserId = db_get_user(context, post.OwnerUserId)
     index.reset()
     posts.reset()
     return post
@@ -582,12 +594,12 @@ def db_get_post(context, uid):
 
 def render_question(args):
     build, templates, title, publisher, question = args
-    question.answers = reversed(question.answers)
     filename = slugify(question.pseudo()) + '.html'
     filepath = os.path.join(build, filename)
 
     # offline images
     for post in chain([question], question.answers):
+
         try:
             body = string2html(post.Body)
         except Exception as exc:
@@ -600,7 +612,7 @@ def render_question(args):
                 src = img.attrib['src']
                 ext = os.path.splitext(src)[1]
                 filename = sha1(src).hexdigest() + ext
-                out = os.path.join(images, filename)
+                out = os.path.join(build, '..', 'static', 'images', filename)
                 # download the image only if it's not already downloaded
                 if os.path.exists(out):
                     continue
@@ -625,6 +637,9 @@ def render_question(args):
             if dirty:
                 post.Body = html2string(body)
 
+    # properly order by highest score
+    question.answers = reversed(question.answers)
+
     jinja(
         filepath,
         'question.html',
@@ -642,7 +657,7 @@ def render_questions(work, title, publisher, cores):
     templates = os.path.abspath('templates')
     database = os.path.join(work, 'db')
     build = os.path.join(work, 'build', 'question')
-    images = os.path.join(work, 'build', 'static', 'images')
+    images = os.path.join(work, 'build', '..', 'static', 'images')
     dump = os.path.join(work, 'dump')
     # prepare database
     connection = wiredtiger_open(database, "create")
@@ -686,6 +701,7 @@ def render_questions(work, title, publisher, cores):
                         if answers.get_key() == question.Id:
                             continue
                     break
+            
             answers.reset()
             # get links
             question.links = list()

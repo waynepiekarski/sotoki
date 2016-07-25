@@ -29,22 +29,22 @@
         {% endfor %}
     </div>
   {% endif %}
-  {# {% if post["OwnerUserId"] %} #}
-  {#   <div class="author"> #}
-  {#     <div> #}
-  {#       <p>asked <span class="date" title="{{ question["CreationDate"] }}">{{ question["CreationDate"] }}</span></p> #}
-  {#       <a class="profile" href="../user/{{ post["OwnerUserId"]["DisplayName"] | slugify  }}.html"> #}
-  {#         <div>  #}
-  {#           <img src="../static/identicon/{{ post["OwnerUserId"]["DisplayName"] | slugify }}.small.png" />  #}
-  {#         </div>  #}
-  {#         <div> #}
-  {#           <p>{{ post["OwnerUserId"]["DisplayName"] }}</p> #}
-  {#           <p>{{ post["OwnerUserId"]["Reputation"] | intspace }}</p> #}
-  {#         </div> #}
-  {#       </a> #}
-  {#     </div> #}
-  {#   </div> #}
-  {# {% endif %}  #}
+  {% if post["OwnerUserId"] %} 
+    <div class="author"> 
+      <div> 
+        <p>asked <span class="date" title="{{ question["CreationDate"] }}">{{ question["CreationDate"] }}</span></p> 
+        <a class="profile" href="../user/{{ post["OwnerUserId"]["DisplayName"] | slugify  }}.html"> 
+          <div>  
+            <img src="../static/identicon/{{ post["OwnerUserId"].pseudo() | slugify }}.small.png" />  
+          </div>  
+          <div> 
+            <p>{{ post["OwnerUserId"]["DisplayName"] }}</p> 
+            <p>{{ post["OwnerUserId"]["Reputation"] | intspace }}</p> 
+          </div> 
+        </a> 
+      </div> 
+    </div> 
+  {% endif %}  
   {% if post["ClosedDate"] %}
     <div class="closed-banner">
       {% if post["ClosedDate"] %}
