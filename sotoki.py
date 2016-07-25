@@ -7,8 +7,8 @@ Usage:
   sotoki.py render questions <work> <title> <publisher>
   sotoki.py render users <work> <title> <publisher>
   sotoki.py render tags <work> <title> <publisher>
-  sotoki.py benchmark xml load <work>
-  sotoki.py benchmark wiredtiger load <work>
+  sotoki.py benchmark xml <work>
+  sotoki.py benchmark wiredtiger <work>
   sotoki.py (-h | --help)
   sotoki.py --version
 
@@ -1057,31 +1057,40 @@ if __name__ == '__main__':
         # create_zims(work, title, publisher, description)
     elif args['benchmark']:
         if args['xml']:
-            if args['load']:
-                print('* Running benchmark xml load')
-                dump = os.path.join(args['<work>'], 'dump')
+            print('* Running benchmark for lxml')
+            dump = os.path.join(args['<work>'], 'dump')
 
-                for klass in [Post]:
-                    filepath = os.path.join(dump, klass.filename())
-                    print('** loading {}'.format(filepath))
-                    for data in iterate(filepath):
-                        obj = klass(**data)
+            filepath = os.path.join(dump, Post.filename())
+            print('** loading {}'.format(filepath))
+            for data in iterate(filepath):
+                obj = Post(**data)
         elif args['wiredtiger']:
-            if args['load']:
-                print('* Running benchmark wiredtiger load')
-                work = args['<work>']
-                database = os.path.join(work, 'db')
-
-                config = "create,statistics=(fast),statistics_log=(wait=10,path=WiredTiger.%d.%H)"
-                connection = wiredtiger_open(database, config)
-                session = connection.open_session(None)
-
-                cursor = session.open_cursor('table:Post', None, None)
-                cursor.reset()
-                while cursor.next() == 0:
-                    uid = cursor.get_key()
-                    values = cursor.get_value()
-                connection.close()
+            print '* Running benchmark for wiredtiger'
+            # prepare paths
+            work = args['<work>']
+            dump = os.path.join(work, 'dump')
+            database = os.path.join(work, 'db')
+            # prepare database
+            connection = wiredtiger_open(database, 'create')
+            session = connection.open_session(None)
+            # create table and indices
+            session.create(Post.table(), Post.format())
+            for index, columns in Post.indices_format():
+                session.create(index, columns)
+            cursor = session.open_cursor('table:Post', None, None)
+            print '** Loading Post.xml'
+            filepath = os.path.join(dump, Post.filename())
+            for data in iterate(filepath):
+                obj = Post(**data)
+                cursor.set_key(*obj.keys())
+                cursor.set_value(*obj.values())
+                cursor.insert()
+            print('* Iterate over whole table')
+            cursor.reset()
+            while cursor.next() == 0:
+                uid = cursor.get_key()
+                values = cursor.get_value()
+            connection.close()
     elif args['load']:
         load(args['<work>'])
     elif args['render']:
