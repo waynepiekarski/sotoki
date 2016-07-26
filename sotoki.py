@@ -2,7 +2,7 @@
 """sotoki.
 
 Usage:
-  sotoki.py run <work> <url> <title> <publisher>
+  sotoki.py run <work> <url> <publisher>
   sotoki.py load <work>
   sotoki.py render questions <work> <title> <publisher>
   sotoki.py render users <work> <title> <publisher>
@@ -78,7 +78,10 @@ class Worker(Process):
     def run(self):
         function = self.function
         for args in iter(self.queue.get, None):
-            function(args)
+            try:
+                function(args)
+            except Exception as exc:
+                print('{} failed with {}'.format(function, exc))
 
 # wiredtiger orm
 
@@ -820,7 +823,8 @@ def render_tags(work, title, publisher, cores):
             # FIXME: support true next page
             questions = list()
             tagpost.set_key(tag)
-            tagpost.search()
+            if tagpost.search() != 0:
+                continue
             while True:
                 uid = tagpost.get_value()
                 question = db_get_post(context, uid)
