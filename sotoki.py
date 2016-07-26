@@ -812,7 +812,6 @@ def render_tags(work, title, publisher, cores):
 
     def iter_tags():
         for i, tag in enumerate(tags):
-            print 'rendering `{}` tag pages'.format(tag)
             dirpath = os.path.join(build, 'tag')
             tagpath = os.path.join(dirpath, tag)
             try:
