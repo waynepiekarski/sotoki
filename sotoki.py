@@ -17,6 +17,7 @@ Options:
   --version     Show version.
 """
 import os
+import shlex
 from itertools import chain
 from time import sleep
 from time import time
@@ -59,6 +60,8 @@ import sys
 import datetime
 import subprocess
 from setproctitle import setproctitle
+from subprocess32 import check_output
+from subprocess32 import TimeoutExpired
 
 setproctitle('sotoki')
 
@@ -988,8 +991,11 @@ def resize_image_profile(image_path):
     image.save(image_path)
 
 
-def exec_cmd(cmd):
-    return envoy.run(str(cmd.encode('utf-8'))).status_code
+def exec_cmd(cmd, timeout=None):
+    try:
+        return check_output(shlex.split(cmd), timeout=timeout)
+    except TimeoutExpired:
+        pass
 
 
 def create_zims(work, title, publisher, description):
