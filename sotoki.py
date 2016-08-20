@@ -15,6 +15,7 @@ Options:
   --version     Show version.
   --directory=<dir>   Specify a directory for xml files [default: work/dump/]
 """
+import redis
 import sqlite3
 import os
 import xml.etree.cElementTree as etree
@@ -57,6 +58,23 @@ import sys
 import datetime
 import subprocess
 
+class UnicodeRedis(redis.Redis):
+
+    def __init__(self, *args, **kwargs):
+        if "encoding" in kwargs:
+            self.encoding = kwargs["encoding"]
+        else:
+            self.encoding = "utf8"
+        super(UnicodeRedis, self).__init__(*args, **kwargs)
+
+    def get(self, *args, **kwargs):
+        result = super(UnicodeRedis, self).get(*args, **kwargs)
+        if isinstance(result, str):
+            print result
+            return unicode(result) #result.encode(encoding)
+        else:
+            print result
+            return result
 
 class Worker(Process):
     def __init__(self, queue):
@@ -280,6 +298,7 @@ def optimize(filepath):
 
 
 def render_questions(templates, database, output, title, publisher, dump, cores):
+    r = UnicodeRedis('localhost') #redis.Redis('localhost')
     # wrap the actual database
     print 'render questions'
     db = os.path.join(database, 'se-dump.db')
@@ -309,21 +328,21 @@ def render_questions(templates, database, output, title, publisher, dump, cores)
             for t in question["Tags"]:
                 sql = "INSERT INTO QuestionTag(Score, Title, CreationDate, Tag) VALUES(?, ?, ?, ?)"
                 cursor.execute(sql, (question["Score"], question["Title"], question["CreationDate"], t))
-            user = cursor.execute("SELECT DisplayName, Reputation  FROM users WHERE Id == ? ", (str(question["OwnerUserId"]),)).fetchone()
-            question["OwnerUserId"] = user
+            #user = cursor.execute("SELECT DisplayName, Reputation  FROM users WHERE Id == ? ", (str(question["OwnerUserId"]),)).fetchone()
+            question["OwnerUserId"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(str(question["OwnerUserId"])).items())
             question["comments"] = cursor.execute("SELECT * FROM comments WHERE Id == ? ", (str(question["Id"]),)).fetchall()
             for u in question["comments"]:
-                tmp = cursor.execute("SELECT DisplayName  FROM users WHERE Id == ?", (str(u["UserId"]),)).fetchone()
-                if tmp is not None:
+                tmp = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(str(u["UserId"])).items()) #cursor.execute("SELECT DisplayName  FROM users WHERE Id == ?", (str(u["UserId"]),)).fetchone()
+                if tmp != {} :#is not None:
                     u["UserDisplayName"] = tmp["DisplayName"]
             question["answers"] = cursor.execute("SELECT * FROM posts WHERE PostTypeId == 2 AND ParentID == ? ", (str(question["Id"]),)).fetchall()
             for q in question["answers"]:
-                user = cursor.execute("SELECT DisplayName, Reputation  FROM users WHERE Id == ? ", (str(q["OwnerUserId"]),)).fetchone()
-                q["OwnerUserId"] = user
+                #user = cursor.execute("SELECT DisplayName, Reputation  FROM users WHERE Id == ? ", (str(q["OwnerUserId"]),)).fetchone()
+                q["OwnerUserId"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(str(q["OwnerUserId"])).items())
                 q["comments"] = cursor.execute("SELECT * FROM comments WHERE Id == ? ", (str(q["Id"]),)).fetchall()
                 for u in q["comments"]:
-                    tmp = cursor.execute("SELECT DisplayName FROM users WHERE Id == ? ", (str(u["UserId"]),)).fetchone()
-                    if tmp is not None:
+                    tmp = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(str(u["UserId"])).items()) #cursor.execute("SELECT DisplayName FROM users WHERE Id == ? ", (str(u["UserId"]),)).fetchone()
+                    if tmp != {}:#None:
                         u["UserDisplayName"] = tmp["DisplayName"]
             tmp = cursor.execute("SELECT PostId FROM postlinks WHERE RelatedPostId == ? ", (str(question["Id"]),)).fetchall()
             question["relateds"] = []
@@ -385,8 +404,9 @@ def some_questions(templates, database, output, title, publisher, dump, question
             title=title,
             publisher=publisher,
         )
-    except:
+    except Exception, e:
         print ' * failed to generate: %s' % filename
+        print e
 
 
 def render_tags(templates, database, output, title, publisher, dump):
@@ -638,7 +658,71 @@ def load(dump_path, database_path):
             db.commit()
             del tree
 
+def load_user(dump_path, templates, database, output, title, publisher):
+    r = redis.Redis('localhost')
+    identicon_path = os.path.join(output, 'static', 'identicon')
+    os.makedirs(identicon_path)
+    os.makedirs(os.path.join(output, 'user'))
+    # Set-up a list of foreground colours (taken from Sigil).
+    foreground = [
+        "rgb(45,79,255)",
+        "rgb(254,180,44)",
+        "rgb(226,121,234)",
+        "rgb(30,179,253)",
+        "rgb(232,77,65)",
+        "rgb(49,203,115)",
+        "rgb(141,69,170)"
+    ]
+    # Set-up a background colour (taken from Sigil).
+    background = "rgb(224,224,224)"
 
+    # Instantiate a generator that will create 5x5 block identicons
+    # using SHA1 digest.
+    generator = pydenticon.Generator(5, 5, foreground=foreground, background=background)  # noqa
+
+
+    with open(os.path.join(dump_path, "users.xml")) as xml_file:
+        tree = etree.iterparse(xml_file)
+        for events, row in tree:
+            try:
+                #data = dict(zip(row.attrib.keys(), row.attrib.values()))
+                user = dict((k.decode('utf8'), v.decode('utf8')) for k,             v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                r.hset(user["Id"], "DisplayName", user["DisplayName"])
+                r.hset(user["Id"], "Reputation", user["Reputation"])
+                #user = dict((k.decode('utf8'), v.decode('utf8')) for k,         v in data.items())
+                username = slugify(user["DisplayName"])
+
+                # Generate big identicon
+                padding = (20, 20, 20, 20)
+                identicon = generator.generate(username, 164, 164, padding=padding, output_format="png")  # noqa
+                filename = username + '.png'
+                fullpath = os.path.join(output, 'static', 'identicon', filename)
+                with open(fullpath, "wb") as f:
+                    f.write(identicon)
+
+                # Generate small identicon
+                padding = [0] * 4  # no padding
+                identicon = generator.generate(username, 32, 32, padding=padding, output_format="png")  # noqa
+                filename = username + '.small.png'
+                fullpath = os.path.join(output, 'static', 'identicon', filename)
+                with open(fullpath, "wb") as f:
+                    f.write(identicon)
+
+                # generate user profile page
+                filename = '%s.html' % username
+                fullpath = os.path.join(output, 'user', filename)
+                #user = dict((k.decode('utf8'), v.decode('utf8')) for k,     v in data.items())
+                #print user
+                jinja(
+                    fullpath,
+                    'user.html',
+                    templates,
+                    user=user,
+                    title=title,
+                    publisher=publisher,
+                )
+            except Exception, e:
+                print e
 if __name__ == '__main__':
     arguments = docopt(__doc__, version='sotoki 0.1')
     if arguments['load']:
@@ -672,15 +756,17 @@ if __name__ == '__main__':
         dump = arguments['--directory']
         database = 'work'
         load(dump, database)
+        #load_user(dump, templates, database, output, title, publisher)
         # render templates into `output`
         templates = 'templates'
         output = os.path.join('work', 'output')
         os.makedirs(output)
         cores = cpu_count() / 2 or 1
         title, description = grab_title_description_favicon(url, output)
+        load_user(dump, templates, database, output, title, publisher)
         render_questions(templates, database, output, title, publisher, dump, cores)
         render_tags(templates, database, output, title, publisher, dump)
-        render_users(templates, database, output, title, publisher, dump)
+        #render_users(templates, database, output, title, publisher, dump)
         # copy static
         copy_tree('static', os.path.join('work', 'output', 'static'))
         create_zims(title, publisher, description)
