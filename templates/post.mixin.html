@@ -33,7 +33,7 @@
   {% if post["OwnerUserId"] %}
     <div class="author">
       <div>
-        <p>asked <span class="date" title="{{ question["CreationDate"] }}">{{ question["CreationDate"] }}</span></p>
+        <p>asked <span class="date" title="{{ post["CreationDate"] }}">{{ post["CreationDate"] }}</span></p>
         <a class="profile" href="../user/{{ post["OwnerUserId"]["DisplayName"] | slugify  }}.html">
           <div> 
             <img src="../static/identicon/{{ post["OwnerUserId"]["DisplayName"] | slugify }}.small.png" /> 
@@ -56,15 +56,7 @@
   {% if post["comments"] %}
     <div class="comments">
       {% for comment in post["comments"] %}
-        <div class="comment">
-          <p>
-            <span class="score {{ comment["Score"] | scale }}">{% if comment["Score"] != 0 %}{{ comment["Score"] }}{% endif %}</span>
-            <span class="text">{{ comment["Text"] | urlize | markdown }}</span>
-            –
-            <a href="{{ rooturl }}/user/{{ comment["UserDisplayName"] | slugify }}.html">{{ comment["UserDisplayName"] }}</a>
-            <span class="date" title="{{ comment["CreationDate"] }}">{{ comment["CreationDate"] }}</span>
-            </p>
-        </div>
+        {% include  comment %}¤
       {% endfor %}
     </div>
   {% endif %}

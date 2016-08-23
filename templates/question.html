@@ -19,7 +19,7 @@
         <h2>Answers</h2>
         <div id="answers">
           {% for post in question["answers"] %}
-            {% include "post.mixin.html" %} 
+            {% include post %} 
           {% endfor %}
         </div>
       {% else %}

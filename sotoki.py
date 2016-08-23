@@ -1,4 +1,5 @@
 #!/usr/bin/env python2
+# -*-coding:utf8 -*
 """sotoki.
 
 Usage:
@@ -15,6 +16,10 @@ Options:
   --version     Show version.
   --directory=<dir>   Specify a directory for xml files [default: work/dump/]
 """
+#PB : 2 lancement de script en meme temps 
+#vider redis
+#=> resumer : avoir un truc genre label pour mes donnees
+
 import redis
 import sqlite3
 import os
@@ -87,6 +92,7 @@ class Worker(Process):
                 some_questions(*data)
             except Exception as exc:
                 print 'error while rendering question:', data[-1]['Id']
+                print exc
 
 
 ANATHOMY = {
@@ -295,7 +301,66 @@ def optimize(filepath):
         exec_cmd('gifsicle -O3 "%s" -o "%s"' % (filepath, filepath), timeout=10)
     else:
         print('* unknown file extension %s' % filepath)
+def comments(templates, output_tmp, dump_path):
+    os.makedirs(os.path.join(output_tmp, 'comments'))
+    r = redis.Redis('localhost')
+    with open(os.path.join(dump_path, "comments.xml")) as xml_file:
+        tree = etree.iterparse(xml_file)
+        for events, row in tree:
+            try:
+                comment = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                comment["UserDisplayName"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(comment["UserId"])).items())["DisplayName"]
+                filename = '%s.html' % comment["Id"]
+                filepath = os.path.join(output_tmp, 'comments', filename)
+                try:
+                    jinja(
+                        filepath,
+                        'comment.html',
+                        templates,
+                        comment=comment,
+                    )
+                except Exception, e:
+                    print ' * failed to generate comments: %s' % filename
+                    print e
 
+                r.rpush("post" + str(comment["PostId"]) + "comments" , os.path.join("tmp" , "comments" , filename ))
+            except Exception, e:
+                    print 'fail in a comments'
+                    print e
+
+def post_type2(templates, output_tmp, dump_path):
+    os.makedirs(os.path.join(output_tmp, 'post'))
+    r = redis.Redis('localhost')
+    with open(os.path.join(dump_path, "posts.xml")) as xml_file:
+        tree = etree.iterparse(xml_file)
+        for events, row in tree:
+            try:
+                post = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                if int(post["PostTypeId"]) == 2:
+                    post["OwnerUserId"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(post["OwnerUserId"])).items())
+                    commentaires = r.lrange("post" + str(post["Id"]) + "comments", 0, -1 )
+                    if commentaires != []:
+                            post["comments"] = commentaires #r.lrange("post" + str(post["Id"]) + "comments", 0, -1 ) #cursor.execute("SELECT * FROM comments WHERE Id == ? ", (str(q["Id"]),)).fetchall()
+                
+                    filename = '%s.html' % post["Id"]
+                    filepath = os.path.join(output_tmp, 'post', filename)
+                    try:
+                        #some_questions(templates, database, output, title, publisher, dump, question, "post.mixin.html" )
+    
+                        jinja(
+                            filepath,
+                            'post.mixin.html',
+                            templates,
+                            post=post,
+                        )
+                    except Exception, e:
+                        print ' * failed to generate post2: %s' % filename
+                        print e
+                    r.rpush("post" + str(post["ParentId"]) + "post2" , os.path.join("tmp" , "post" , filename ))
+                else:
+                    r.set("post" + str(post["Id"]) + "title", post["Title"])
+            except Exception, e:
+                    print 'fail in a post2' + str(e)
 
 def render_questions(templates, database, output, title, publisher, dump, cores):
     r = UnicodeRedis('localhost') #redis.Redis('localhost')
@@ -311,58 +376,52 @@ def render_questions(templates, database, output, title, publisher, dump, cores)
     conn.commit()
     os.makedirs(os.path.join(output, 'question'))
     request_queue = Queue()
-    for i in range(cores):
-        Worker(request_queue).start()
     offset = 0
-    while offset is not None:
-        questions = cursor.execute("SELECT * FROM posts WHERE PostTypeId == 1 LIMIT 1001 OFFSET ? ",  ( offset, ) ).fetchall()
-        try:
-            questions[1000]
-        except IndexError:
-            offset = None
-        else:
-            offset += 1000
-        questions = questions[:1000]
-        for question in questions:
-            question["Tags"] = question["Tags"][1:-1].split('><')
-            for t in question["Tags"]:
-                sql = "INSERT INTO QuestionTag(Score, Title, CreationDate, Tag) VALUES(?, ?, ?, ?)"
-                cursor.execute(sql, (question["Score"], question["Title"], question["CreationDate"], t))
-            #user = cursor.execute("SELECT DisplayName, Reputation  FROM users WHERE Id == ? ", (str(question["OwnerUserId"]),)).fetchone()
-            question["OwnerUserId"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(str(question["OwnerUserId"])).items())
-            question["comments"] = cursor.execute("SELECT * FROM comments WHERE Id == ? ", (str(question["Id"]),)).fetchall()
-            for u in question["comments"]:
-                tmp = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(str(u["UserId"])).items()) #cursor.execute("SELECT DisplayName  FROM users WHERE Id == ?", (str(u["UserId"]),)).fetchone()
-                if tmp != {} :#is not None:
-                    u["UserDisplayName"] = tmp["DisplayName"]
-            question["answers"] = cursor.execute("SELECT * FROM posts WHERE PostTypeId == 2 AND ParentID == ? ", (str(question["Id"]),)).fetchall()
-            for q in question["answers"]:
-                #user = cursor.execute("SELECT DisplayName, Reputation  FROM users WHERE Id == ? ", (str(q["OwnerUserId"]),)).fetchone()
-                q["OwnerUserId"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(str(q["OwnerUserId"])).items())
-                q["comments"] = cursor.execute("SELECT * FROM comments WHERE Id == ? ", (str(q["Id"]),)).fetchall()
-                for u in q["comments"]:
-                    tmp = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(str(u["UserId"])).items()) #cursor.execute("SELECT DisplayName FROM users WHERE Id == ? ", (str(u["UserId"]),)).fetchone()
-                    if tmp != {}:#None:
-                        u["UserDisplayName"] = tmp["DisplayName"]
-            tmp = cursor.execute("SELECT PostId FROM postlinks WHERE RelatedPostId == ? ", (str(question["Id"]),)).fetchall()
-            question["relateds"] = []
-            for links in tmp:
-                name = cursor.execute("SELECT Title FROM posts WHERE Id == ? ", (links["PostId"],)).fetchone()
-                if name is not None:
-                    question["relateds"].append(name["Title"])
-            data_send = [templates, database, output, title, publisher, dump, question]
-            request_queue.put(data_send)
-        conn.commit()
-    for i in range(cores):
-        request_queue.put(None)
+    with open(os.path.join(dump, "posts.xml")) as xml_file:
+        tree = etree.iterparse(xml_file)
+        for events, row in tree:
+            try:
+                question = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                if int(question["PostTypeId"]) == 1:
+                    question["Tags"] = question["Tags"][1:-1].split('><')
+                    for t in question["Tags"]:
+                        sql = "INSERT INTO QuestionTag(Score, Title, CreationDate, Tag) VALUES(?, ?, ?, ?)"
+                        cursor.execute(sql, (question["Score"], question["Title"], question["CreationDate"], t))
+                    question["OwnerUserId"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(question["OwnerUserId"])).items())
+                    question["comments"] = r.lrange("post" + str(question["Id"]) + "comments", 0, -1 ) 
+                    question["answers"] =  r.lrange("post" + str(question["Id"]) + "post2", 0, -1 ) 
+                    tmp =  r.lrange("post" + str(question["Id"]) + "link", 0, -1 ) 
+                    question["relateds"] = []
+                    for link in tmp:
+                        name = r.get("post" + link + "title")
+                        if name is not None:
+                            question["relateds"].append(name)
+                    #data_send = [templates, database, output, title, publisher, dump, question]
+                    #data_send
+                    some_questions(templates, database, output, title, publisher, dump, question, "question.html" )
+                conn.commit()
+            except Exception, e:
+                print "error with post type 1" + str(e)
+
+def posts_links(templates, output_tmp, dump_path):
+    r = redis.Redis('localhost')
+    with open(os.path.join(dump_path, "postlinks.xml")) as xml_file:
+        tree = etree.iterparse(xml_file)
+        for events, row in tree:
+            try:
+                link = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                r.rpush("post" + str(link["RelatedPostId"]) + "link" , link["PostId"])
+            except Exception, e:
+                print "error with link" + str(e)
 
 
-def some_questions(templates, database, output, title, publisher, dump, question):
+
+def some_questions(templates, database, output, title, publisher, dump, question, template_name):
     filename = '%s.html' % slugify(question["Title"])
     filepath = os.path.join(output, 'question', filename)
     images = os.path.join(output, 'static', 'images')
     #
-    for post in chain([question], question['answers']):
+    for post in [question]:
         body = string2html(post['Body'])
         imgs = body.xpath('//img')
         for img in imgs:
@@ -397,7 +456,7 @@ def some_questions(templates, database, output, title, publisher, dump, question
     try:
         jinja(
             filepath,
-            'question.html',
+            template_name,
             templates,
             question=question,
             rooturl="..",
@@ -406,7 +465,7 @@ def some_questions(templates, database, output, title, publisher, dump, question
         )
     except Exception, e:
         print ' * failed to generate: %s' % filename
-        print e
+        print "erreur jinja" + str(e)
 
 
 def render_tags(templates, database, output, title, publisher, dump):
@@ -416,8 +475,15 @@ def render_tags(templates, database, output, title, publisher, dump):
     conn = sqlite3.connect(db)
     conn.row_factory = dict_factory
     cursor = conn.cursor()
-
-    tags = cursor.execute("SELECT TagName FROM tags ORDER BY TagName").fetchall()
+    tags = []
+    with open(os.path.join(dump, "tags.xml")) as xml_file:
+        tree = etree.iterparse(xml_file)
+        for events, row in tree:
+            try:
+               tag = dict(zip(row.attrib.keys(), row.attrib.values()))
+               tags.append({'TagName': tag["TagName"]})
+            except Exception,e:
+                print "error on tag"
     jinja(
         os.path.join(output, 'index.html'),
         'tags.html',
@@ -465,66 +531,6 @@ def render_tags(templates, database, output, title, publisher, dump):
             page += 1
     conn.close()
 
-
-def render_users(templates, database, output, title, publisher, dump):
-    print 'render users'
-    os.makedirs(os.path.join(output, 'user'))
-    db = os.path.join(database, 'se-dump.db')
-    conn = sqlite3.connect(db)
-    conn.row_factory = dict_factory
-    cursor = conn.cursor()
-    users = cursor.execute("""SELECT * FROM users""").fetchall()
-
-    # Prepare identicon generation
-    identicon_path = os.path.join(output, 'static', 'identicon')
-    os.makedirs(identicon_path)
-    # Set-up a list of foreground colours (taken from Sigil).
-    foreground = [
-        "rgb(45,79,255)",
-        "rgb(254,180,44)",
-        "rgb(226,121,234)",
-        "rgb(30,179,253)",
-        "rgb(232,77,65)",
-        "rgb(49,203,115)",
-        "rgb(141,69,170)"
-    ]
-    # Set-up a background colour (taken from Sigil).
-    background = "rgb(224,224,224)"
-
-    # Instantiate a generator that will create 5x5 block identicons
-    # using SHA1 digest.
-    generator = pydenticon.Generator(5, 5, foreground=foreground, background=background)  # noqa
-
-    for user in users:
-        username = slugify(user["DisplayName"])
-
-        # Generate big identicon
-        padding = (20, 20, 20, 20)
-        identicon = generator.generate(username, 164, 164, padding=padding, output_format="png")  # noqa
-        filename = username + '.png'
-        fullpath = os.path.join(output, 'static', 'identicon', filename)
-        with open(fullpath, "wb") as f:
-            f.write(identicon)
-
-        # Generate small identicon
-        padding = [0] * 4  # no padding
-        identicon = generator.generate(username, 32, 32, padding=padding, output_format="png")  # noqa
-        filename = username + '.small.png'
-        fullpath = os.path.join(output, 'static', 'identicon', filename)
-        with open(fullpath, "wb") as f:
-            f.write(identicon)
-
-        # generate user profile page
-        filename = '%s.html' % username
-        fullpath = os.path.join(output, 'user', filename)
-        jinja(
-            fullpath,
-            'user.html',
-            templates,
-            user=user,
-            title=title,
-            publisher=publisher,
-        )
 
 
 def grab_title_description_favicon(url, output_dir):
@@ -685,11 +691,9 @@ def load_user(dump_path, templates, database, output, title, publisher):
         tree = etree.iterparse(xml_file)
         for events, row in tree:
             try:
-                #data = dict(zip(row.attrib.keys(), row.attrib.values()))
                 user = dict((k.decode('utf8'), v.decode('utf8')) for k,             v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
-                r.hset(user["Id"], "DisplayName", user["DisplayName"])
-                r.hset(user["Id"], "Reputation", user["Reputation"])
-                #user = dict((k.decode('utf8'), v.decode('utf8')) for k,         v in data.items())
+                r.hset("user" + user["Id"], "DisplayName", user["DisplayName"])
+                r.hset("user" + user["Id"], "Reputation", user["Reputation"])
                 username = slugify(user["DisplayName"])
 
                 # Generate big identicon
@@ -711,8 +715,6 @@ def load_user(dump_path, templates, database, output, title, publisher):
                 # generate user profile page
                 filename = '%s.html' % username
                 fullpath = os.path.join(output, 'user', filename)
-                #user = dict((k.decode('utf8'), v.decode('utf8')) for k,     v in data.items())
-                #print user
                 jinja(
                     fullpath,
                     'user.html',
@@ -755,18 +757,22 @@ if __name__ == '__main__':
         publisher = arguments['<publisher>']
         dump = arguments['--directory']
         database = 'work'
-        load(dump, database)
+        #load(dump, database)
         #load_user(dump, templates, database, output, title, publisher)
         # render templates into `output`
         templates = 'templates'
         output = os.path.join('work', 'output')
         os.makedirs(output)
-        cores = cpu_count() / 2 or 1
+        output_tmp= os.path.join('templates', 'tmp')
+        os.makedirs(output_tmp)
+        cores = 1 #cpu_count() / 2 or 1
         title, description = grab_title_description_favicon(url, output)
         load_user(dump, templates, database, output, title, publisher)
+        comments(templates, output_tmp, dump)
+        post_type2(templates, output_tmp, dump)
+        posts_links(templates, output_tmp, dump)
         render_questions(templates, database, output, title, publisher, dump, cores)
         render_tags(templates, database, output, title, publisher, dump)
-        #render_users(templates, database, output, title, publisher, dump)
         # copy static
         copy_tree('static', os.path.join('work', 'output', 'static'))
         create_zims(title, publisher, description)
