@@ -75,10 +75,8 @@ class UnicodeRedis(redis.Redis):
     def get(self, *args, **kwargs):
         result = super(UnicodeRedis, self).get(*args, **kwargs)
         if isinstance(result, str):
-            print result
-            return unicode(result) #result.encode(encoding)
+            return unicode(result) 
         else:
-            print result
             return result
 
 class Worker(Process):
@@ -308,7 +306,7 @@ def comments(templates, output_tmp, dump_path):
         tree = etree.iterparse(xml_file)
         for events, row in tree:
             try:
-                comment = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                comment = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
                 comment["UserDisplayName"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(comment["UserId"])).items())["DisplayName"]
                 filename = '%s.html' % comment["Id"]
                 filepath = os.path.join(output_tmp, 'comments', filename)
@@ -329,24 +327,23 @@ def comments(templates, output_tmp, dump_path):
                     print e
 
 def post_type2(templates, output_tmp, dump_path):
+    print "First passage to posts.xml"
     os.makedirs(os.path.join(output_tmp, 'post'))
     r = redis.Redis('localhost')
     with open(os.path.join(dump_path, "posts.xml")) as xml_file:
         tree = etree.iterparse(xml_file)
         for events, row in tree:
             try:
-                post = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                post = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
                 if int(post["PostTypeId"]) == 2:
                     post["OwnerUserId"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(post["OwnerUserId"])).items())
                     commentaires = r.lrange("post" + str(post["Id"]) + "comments", 0, -1 )
                     if commentaires != []:
-                            post["comments"] = commentaires #r.lrange("post" + str(post["Id"]) + "comments", 0, -1 ) #cursor.execute("SELECT * FROM comments WHERE Id == ? ", (str(q["Id"]),)).fetchall()
+                            post["comments"] = commentaires 
                 
                     filename = '%s.html' % post["Id"]
                     filepath = os.path.join(output_tmp, 'post', filename)
                     try:
-                        #some_questions(templates, database, output, title, publisher, dump, question, "post.mixin.html" )
-    
                         jinja(
                             filepath,
                             'post.mixin.html',
@@ -376,12 +373,14 @@ def render_questions(templates, database, output, title, publisher, dump, cores)
     conn.commit()
     os.makedirs(os.path.join(output, 'question'))
     request_queue = Queue()
-    offset = 0
+    for i in range(cores):
+        Worker(request_queue).start()
+
     with open(os.path.join(dump, "posts.xml")) as xml_file:
         tree = etree.iterparse(xml_file)
         for events, row in tree:
             try:
-                question = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                question = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
                 if int(question["PostTypeId"]) == 1:
                     question["Tags"] = question["Tags"][1:-1].split('><')
                     for t in question["Tags"]:
@@ -396,14 +395,17 @@ def render_questions(templates, database, output, title, publisher, dump, cores)
                         name = r.get("post" + link + "title")
                         if name is not None:
                             question["relateds"].append(name)
-                    #data_send = [templates, database, output, title, publisher, dump, question]
-                    #data_send
-                    some_questions(templates, database, output, title, publisher, dump, question, "question.html" )
+                    data_send = [templates, database, output, title, publisher, dump, question, "question.html"]
+                    request_queue.put(data_send)
+                    #some_questions(templates, database, output, title, publisher, dump, question, "question.html" )
                 conn.commit()
             except Exception, e:
                 print "error with post type 1" + str(e)
+    for i in range(cores):
+        request_queue.put(None)
 
 def posts_links(templates, output_tmp, dump_path):
+    print "Load links"
     r = redis.Redis('localhost')
     with open(os.path.join(dump_path, "postlinks.xml")) as xml_file:
         tree = etree.iterparse(xml_file)
@@ -470,6 +472,7 @@ def some_questions(templates, database, output, title, publisher, dump, question
 
 def render_tags(templates, database, output, title, publisher, dump):
     print 'render tags'
+    
     # index page
     db = os.path.join(database, 'se-dump.db')
     conn = sqlite3.connect(db)
@@ -483,7 +486,7 @@ def render_tags(templates, database, output, title, publisher, dump):
                tag = dict(zip(row.attrib.keys(), row.attrib.values()))
                tags.append({'TagName': tag["TagName"]})
             except Exception,e:
-                print "error on tag"
+                print "error on tag" + str(e)
     jinja(
         os.path.join(output, 'index.html'),
         'tags.html',
@@ -618,53 +621,21 @@ def bin_is_present(binary):
     else:
         return True
 
+def dict_to_unicodedict(dictionnary):
+    dict_ = {}
+    for k, v in dictionnary.items():
+        unicode_key = k.decode('utf8')
+        if isinstance(v, unicode):
+            unicode_value = v
+        else:
+            unicode_value =  v.decode('utf8')
+        dict_[unicode_key] = unicode_value
+        
+    return dict_ 
 
-def load(dump_path, database_path):
-    dump_database_name = 'se-dump.db'
-    log_filename = 'se-parser.log'
-    create_query = 'CREATE TABLE IF NOT EXISTS {table} ({fields})'
-    insert_query = 'INSERT INTO {table} ({columns}) VALUES ({values})'
-
-    logging.basicConfig(filename=os.path.join(dump_path, log_filename), level=logging.INFO)
-    db = sqlite3.connect(os.path.join(database_path, dump_database_name))
-
-    for file, spec in ANATHOMY.items():
-        print "Opening {0}.xml".format(file)
-        with open(os.path.join(dump_path, file + '.xml')) as xml_file:
-            tree = etree.iterparse(xml_file)
-            table_name = file
-
-            sql_create = create_query.format(
-                table=table_name,
-                fields=", ".join(['{0} {1}'.format(name, type) for name, type in spec.items()]))
-            print('Creating table {0}'.format(table_name))
-
-            try:
-                logging.info(sql_create)
-                db.execute(sql_create)
-            except Exception, e:
-                logging.warning(e)
-
-            for events, row in tree:
-                try:
-                    if row.attrib.values():
-                        logging.debug(row.attrib.keys())
-                        query = insert_query.format(
-                            table=table_name,
-                            columns=', '.join(row.attrib.keys()),
-                            values=('?, ' * len(row.attrib.keys()))[:-2])
-                        db.execute(query, row.attrib.values())
-                        print ".",
-                except Exception, e:
-                    logging.warning(e)
-                    print "x",
-                finally:
-                    row.clear()
-            print "\n"
-            db.commit()
-            del tree
 
 def load_user(dump_path, templates, database, output, title, publisher):
+    print "Load and render users"
     r = redis.Redis('localhost')
     identicon_path = os.path.join(output, 'static', 'identicon')
     os.makedirs(identicon_path)
@@ -691,7 +662,7 @@ def load_user(dump_path, templates, database, output, title, publisher):
         tree = etree.iterparse(xml_file)
         for events, row in tree:
             try:
-                user = dict((k.decode('utf8'), v.decode('utf8')) for k,             v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                user = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values())))  
                 r.hset("user" + user["Id"], "DisplayName", user["DisplayName"])
                 r.hset("user" + user["Id"], "Reputation", user["Reputation"])
                 username = slugify(user["DisplayName"])
@@ -757,15 +728,13 @@ if __name__ == '__main__':
         publisher = arguments['<publisher>']
         dump = arguments['--directory']
         database = 'work'
-        #load(dump, database)
-        #load_user(dump, templates, database, output, title, publisher)
         # render templates into `output`
         templates = 'templates'
         output = os.path.join('work', 'output')
         os.makedirs(output)
         output_tmp= os.path.join('templates', 'tmp')
         os.makedirs(output_tmp)
-        cores = 1 #cpu_count() / 2 or 1
+        cores = cpu_count() / 2 or 1
         title, description = grab_title_description_favicon(url, output)
         load_user(dump, templates, database, output, title, publisher)
         comments(templates, output_tmp, dump)
