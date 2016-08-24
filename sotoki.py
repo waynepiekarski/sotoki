@@ -4,9 +4,6 @@
 
 Usage:
   sotoki.py run <url> <publisher> [--directory=<dir>]
-  sotoki.py load <dump-directory> <database-directory>
-  sotoki.py render <templates> <database> <output> <title> <publisher> [--directory=<dir>]
-  sotoki.py render-users <templates> <database> <output> <title> <publisher> [--directory=<dir>]
   sotoki.py benchmark <work>
   sotoki.py (-h | --help)
   sotoki.py --version
@@ -184,7 +181,7 @@ def comments(templates, output_tmp, dump_path, uuid):
                 comment = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
                 if comment != {}:
                     if comment.has_key("UserId"):
-                        comment["UserDisplayName"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(uuid + "user" + str(comment["UserId"])).items())["DisplayName"]
+                        comment["UserDisplayName"] = dict_to_unicodedict(r.hgetall(uuid + "user" + str(comment["UserId"])))["DisplayName"]
                     filename = '%s.html' % comment["Id"]
                     filepath = os.path.join(output_tmp, 'comments', filename)
                     try:
@@ -210,9 +207,8 @@ def post_type2(templates, output_tmp, dump_path,uuid):
     with open(os.path.join(dump_path, "posts.xml")) as xml_file:
         tree = etree.iterparse(xml_file)
         for events, row in tree:
-            post = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
             try:
-                #post = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
+                post = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
                 if post != {} and int(post["PostTypeId"]) == 2:
                     if post.has_key("OwnerUserId"):
                         post["OwnerUserId"] =   dict_to_unicodedict(r.hgetall( uuid + "user" + str(post["OwnerUserId"])))
@@ -297,7 +293,7 @@ def posts_links(templates, output_tmp, dump_path, uuid):
         tree = etree.iterparse(xml_file)
         for events, row in tree:
             try:
-                link = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
+                link = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values())))
                 if link != {}:
                     r.rpush(uuid + "post" + str(link["RelatedPostId"]) + "link" , link["PostId"])
             except Exception, e:
@@ -592,29 +588,7 @@ def load_user(dump_path, templates, database, output, title, publisher, uuid):
                 print e
 if __name__ == '__main__':
     arguments = docopt(__doc__, version='sotoki 0.1')
-    if arguments['load']:
-        load(arguments['<dump-directory>'], arguments['<database-directory>'])
-    elif arguments['render']:
-        render_questions(
-            arguments['<templates>'],
-            arguments['<database>'],
-            arguments['<output>'],
-            arguments['<title>'],
-            arguments['<publisher>'],
-            arguments['--directory']
-        )
-        render_tags(
-            arguments['<templates>'],
-            arguments['<database>'],
-            arguments['<output>'],
-            arguments['<title>'],
-            arguments['<publisher>'],
-            arguments['--directory']
-        )
-
-    elif arguments['render-users']:
-        render_users(arguments['<templates>'], arguments['<database>'], arguments['<output>'])  # noqa
-    elif arguments['run']:
+    if arguments['run']:
         if not bin_is_present("zimwriterfs"):
             sys.exit("zimwriterfs is not available, please install it.")
         # load dump into database
