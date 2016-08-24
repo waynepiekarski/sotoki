@@ -63,21 +63,6 @@ import sys
 import datetime
 import subprocess
 
-class UnicodeRedis(redis.Redis):
-
-    def __init__(self, *args, **kwargs):
-        if "encoding" in kwargs:
-            self.encoding = kwargs["encoding"]
-        else:
-            self.encoding = "utf8"
-        super(UnicodeRedis, self).__init__(*args, **kwargs)
-
-    def get(self, *args, **kwargs):
-        result = super(UnicodeRedis, self).get(*args, **kwargs)
-        if isinstance(result, str):
-            return unicode(result) 
-        else:
-            return result
 
 class Worker(Process):
     def __init__(self, queue):
@@ -91,114 +76,6 @@ class Worker(Process):
             except Exception as exc:
                 print 'error while rendering question:', data[-1]['Id']
                 print exc
-
-
-ANATHOMY = {
-    'badges': {
-        'Id': 'INTEGER',
-        'UserId': 'INTEGER',
-        'Name': 'TEXT',
-        'Date': 'DATETIME',
-        'Class': 'INTEGER',
-        'TagBased': 'INTEGER'
-    },
-    'comments': {
-        'Id': 'INTEGER',
-        'PostId': 'INTEGER',
-        'Score': 'INTEGER',
-        'Text': 'TEXT',
-        'CreationDate': 'DATETIME',
-        'UserId': 'INTEGER',
-        'UserDisplayName': 'TEXT'
-    },
-    'posts': {
-        'Id': 'INTEGER',
-        'PostTypeId': 'INTEGER',  # 1: Question, 2: Answer
-        'ParentID': 'INTEGER',  # (only present if PostTypeId is 2)
-        'AcceptedAnswerId': 'INTEGER',  # (only present if PostTypeId is 1)
-        'CreationDate': 'DATETIME',
-        'Score': 'INTEGER',
-        'ViewCount': 'INTEGER',
-        'Body': 'TEXT',
-        'OwnerUserId': 'INTEGER',  # (present only if user has not been deleted)
-        'OwnerDisplayName': 'TEXT',
-        'LastEditorUserId': 'INTEGER',
-        'LastEditorDisplayName': 'TEXT',  # ="Rich B"
-        'LastEditDate': 'DATETIME',  # "2009-03-05T22:28:34.823"
-        'LastActivityDate': 'DATETIME',  # "2009-03-11T12:51:01.480"
-        'CommunityOwnedDate': 'DATETIME',  # (present only if post is community wikied)
-        'Title': 'TEXT',
-        'Tags': 'TEXT',
-        'AnswerCount': 'INTEGER',
-        'CommentCount': 'INTEGER',
-        'FavoriteCount': 'INTEGER',
-        'ClosedDate': 'DATETIME'
-    },
-    'votes': {
-        'Id': 'INTEGER',
-        'PostId': 'INTEGER',
-        'UserId': 'INTEGER',
-        'VoteTypeId': 'INTEGER',
-        # -   1: AcceptedByOriginator
-        # -   2: UpMod
-        # -   3: DownMod
-        # -   4: Offensive
-        # -   5: Favorite
-        # -   6: Close
-        # -   7: Reopen
-        # -   8: BountyStart
-        # -   9: BountyClose
-        # -  10: Deletion
-        # -  11: Undeletion
-        # -  12: Spam
-        # -  13: InformModerator
-        'CreationDate': 'DATETIME',
-        'BountyAmount': 'INTEGER'
-    },
-    'posthistory': {
-        'Id': 'INTEGER',
-        'PostHistoryTypeId': 'INTEGER',
-        'PostId': 'INTEGER',
-        'RevisionGUID': 'INTEGER',
-        'CreationDate': 'DATETIME',
-        'UserId': 'INTEGER',
-        'UserDisplayName': 'TEXT',
-        'Comment': 'TEXT',
-        'Text': 'TEXT'
-    },
-    'postlinks': {
-        'Id': 'INTEGER',
-        'CreationDate': 'DATETIME',
-        'PostId': 'INTEGER',
-        'RelatedPostId': 'INTEGER',
-        'PostLinkTypeId': 'INTEGER',
-        'LinkTypeId': 'INTEGER'
-    },
-    'users': {
-        'Id': 'INTEGER',
-        'Reputation': 'INTEGER',
-        'CreationDate': 'DATETIME',
-        'DisplayName': 'TEXT',
-        'LastAccessDate': 'DATETIME',
-        'WebsiteUrl': 'TEXT',
-        'Location': 'TEXT',
-        'Age': 'INTEGER',
-        'AboutMe': 'TEXT',
-        'Views': 'INTEGER',
-        'UpVotes': 'INTEGER',
-        'DownVotes': 'INTEGER',
-        'EmailHash': 'TEXT',
-        'AccountId': 'INTEGER',
-        'ProfileImageUrl': 'TEXT'
-    },
-    'tags': {
-        'Id': 'INTEGER',
-        'TagName': 'TEXT',
-        'Count': 'INTEGER',
-        'ExcerptPostId': 'INTEGER',
-        'WikiPostId': 'INTEGER'
-    }
-}
 
 
 # templating
@@ -300,6 +177,7 @@ def optimize(filepath):
     else:
         print('* unknown file extension %s' % filepath)
 def comments(templates, output_tmp, dump_path):
+    print "Load and render comments"
     os.makedirs(os.path.join(output_tmp, 'comments'))
     r = redis.Redis('localhost')
     with open(os.path.join(dump_path, "comments.xml")) as xml_file:
@@ -307,21 +185,23 @@ def comments(templates, output_tmp, dump_path):
         for events, row in tree:
             try:
                 comment = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
-                comment["UserDisplayName"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(comment["UserId"])).items())["DisplayName"]
-                filename = '%s.html' % comment["Id"]
-                filepath = os.path.join(output_tmp, 'comments', filename)
-                try:
-                    jinja(
-                        filepath,
-                        'comment.html',
-                        templates,
-                        comment=comment,
-                    )
-                except Exception, e:
-                    print ' * failed to generate comments: %s' % filename
-                    print e
-
-                r.rpush("post" + str(comment["PostId"]) + "comments" , os.path.join("tmp" , "comments" , filename ))
+                if comment != {}:
+                    if comment.has_key("UserId"):
+                        comment["UserDisplayName"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(comment["UserId"])).items())["DisplayName"]
+                    filename = '%s.html' % comment["Id"]
+                    filepath = os.path.join(output_tmp, 'comments', filename)
+                    try:
+                        jinja(
+                            filepath,
+                            'comment.html',
+                            templates,
+                            comment=comment,
+                        )
+                    except Exception, e:
+                        print ' * failed to generate comments: %s' % filename
+                        print e
+    
+                    r.rpush("post" + str(comment["PostId"]) + "comments" , os.path.join("tmp" , "comments" , filename ))
             except Exception, e:
                     print 'fail in a comments'
                     print e
@@ -333,10 +213,14 @@ def post_type2(templates, output_tmp, dump_path):
     with open(os.path.join(dump_path, "posts.xml")) as xml_file:
         tree = etree.iterparse(xml_file)
         for events, row in tree:
+            post = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
             try:
-                post = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
-                if int(post["PostTypeId"]) == 2:
-                    post["OwnerUserId"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(post["OwnerUserId"])).items())
+                #post = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
+                if post != {} and int(post["PostTypeId"]) == 2:
+                    if post.has_key("OwnerUserId"):
+                        post["OwnerUserId"] =   dict_to_unicodedict(r.hgetall("user" + str(post["OwnerUserId"])))
+                    else:
+                        post["OwnerUserId"] = { "DisplayName" : post["OwnerDisplayName"].decode('utf8') }
                     commentaires = r.lrange("post" + str(post["Id"]) + "comments", 0, -1 )
                     if commentaires != []:
                             post["comments"] = commentaires 
@@ -353,14 +237,15 @@ def post_type2(templates, output_tmp, dump_path):
                     except Exception, e:
                         print ' * failed to generate post2: %s' % filename
                         print e
+                        print post
                     r.rpush("post" + str(post["ParentId"]) + "post2" , os.path.join("tmp" , "post" , filename ))
-                else:
+                elif post != {} and int(post["PostTypeId"]) == 1:
                     r.set("post" + str(post["Id"]) + "title", post["Title"])
             except Exception, e:
                     print 'fail in a post2' + str(e)
-
+                    print post
 def render_questions(templates, database, output, title, publisher, dump, cores):
-    r = UnicodeRedis('localhost') #redis.Redis('localhost')
+    r = redis.Redis('localhost') 
     # wrap the actual database
     print 'render questions'
     db = os.path.join(database, 'se-dump.db')
@@ -381,12 +266,16 @@ def render_questions(templates, database, output, title, publisher, dump, cores)
         for events, row in tree:
             try:
                 question = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
-                if int(question["PostTypeId"]) == 1:
+                if question != {} and int(question["PostTypeId"]) == 1:
                     question["Tags"] = question["Tags"][1:-1].split('><')
                     for t in question["Tags"]:
                         sql = "INSERT INTO QuestionTag(Score, Title, CreationDate, Tag) VALUES(?, ?, ?, ?)"
                         cursor.execute(sql, (question["Score"], question["Title"], question["CreationDate"], t))
-                    question["OwnerUserId"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(question["OwnerUserId"])).items())
+                    if question.has_key("OwnerUserId"):
+                        question["OwnerUserId"] = dict_to_unicodedict(r.hgetall("user" + str(question["OwnerUserId"])))
+                    else:
+                        question["OwnerUserId"] = { "DisplayName" : question["OwnerDisplayName"].decode('utf8') }
+
                     question["comments"] = r.lrange("post" + str(question["Id"]) + "comments", 0, -1 ) 
                     question["answers"] =  r.lrange("post" + str(question["Id"]) + "post2", 0, -1 ) 
                     tmp =  r.lrange("post" + str(question["Id"]) + "link", 0, -1 ) 
@@ -394,7 +283,7 @@ def render_questions(templates, database, output, title, publisher, dump, cores)
                     for link in tmp:
                         name = r.get("post" + link + "title")
                         if name is not None:
-                            question["relateds"].append(name)
+                            question["relateds"].append(name.decode('utf8'))
                     data_send = [templates, database, output, title, publisher, dump, question, "question.html"]
                     request_queue.put(data_send)
                     #some_questions(templates, database, output, title, publisher, dump, question, "question.html" )
@@ -412,7 +301,8 @@ def posts_links(templates, output_tmp, dump_path):
         for events, row in tree:
             try:
                 link = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
-                r.rpush("post" + str(link["RelatedPostId"]) + "link" , link["PostId"])
+                if link != {}:
+                    r.rpush("post" + str(link["RelatedPostId"]) + "link" , link["PostId"])
             except Exception, e:
                 print "error with link" + str(e)
 
@@ -471,7 +361,7 @@ def some_questions(templates, database, output, title, publisher, dump, question
 
 
 def render_tags(templates, database, output, title, publisher, dump):
-    print 'render tags'
+    print 'Render tags'
     
     # index page
     db = os.path.join(database, 'se-dump.db')
@@ -483,10 +373,12 @@ def render_tags(templates, database, output, title, publisher, dump):
         tree = etree.iterparse(xml_file)
         for events, row in tree:
             try:
-               tag = dict(zip(row.attrib.keys(), row.attrib.values()))
-               tags.append({'TagName': tag["TagName"]})
+                tag = dict(zip(row.attrib.keys(), row.attrib.values()))
+                if tag != {}:
+                    tags.append({'TagName': tag["TagName"]})
             except Exception,e:
                 print "error on tag" + str(e)
+                print tag
     jinja(
         os.path.join(output, 'index.html'),
         'tags.html',
@@ -663,37 +555,38 @@ def load_user(dump_path, templates, database, output, title, publisher):
         for events, row in tree:
             try:
                 user = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values())))  
-                r.hset("user" + user["Id"], "DisplayName", user["DisplayName"])
-                r.hset("user" + user["Id"], "Reputation", user["Reputation"])
-                username = slugify(user["DisplayName"])
+                if user != {}:
+                    r.hset("user" + user["Id"], "DisplayName", user["DisplayName"])
+                    r.hset("user" + user["Id"], "Reputation", user["Reputation"])
+                    username = slugify(user["DisplayName"])
 
-                # Generate big identicon
-                padding = (20, 20, 20, 20)
-                identicon = generator.generate(username, 164, 164, padding=padding, output_format="png")  # noqa
-                filename = username + '.png'
-                fullpath = os.path.join(output, 'static', 'identicon', filename)
-                with open(fullpath, "wb") as f:
-                    f.write(identicon)
-
-                # Generate small identicon
-                padding = [0] * 4  # no padding
-                identicon = generator.generate(username, 32, 32, padding=padding, output_format="png")  # noqa
-                filename = username + '.small.png'
-                fullpath = os.path.join(output, 'static', 'identicon', filename)
-                with open(fullpath, "wb") as f:
-                    f.write(identicon)
-
-                # generate user profile page
-                filename = '%s.html' % username
-                fullpath = os.path.join(output, 'user', filename)
-                jinja(
-                    fullpath,
-                    'user.html',
-                    templates,
-                    user=user,
-                    title=title,
-                    publisher=publisher,
-                )
+                    # Generate big identicon
+                    padding = (20, 20, 20, 20)
+                    identicon = generator.generate(username, 164, 164, padding=padding, output_format="png")  # noqa
+                    filename = username + '.png'
+                    fullpath = os.path.join(output, 'static', 'identicon', filename)
+                    with open(fullpath, "wb") as f:
+                        f.write(identicon)
+    
+                    # Generate small identicon
+                    padding = [0] * 4  # no padding
+                    identicon = generator.generate(username, 32, 32, padding=padding, output_format="png")  # noqa
+                    filename = username + '.small.png'
+                    fullpath = os.path.join(output, 'static', 'identicon', filename)
+                    with open(fullpath, "wb") as f:
+                        f.write(identicon)
+    
+                    # generate user profile page
+                    filename = '%s.html' % username
+                    fullpath = os.path.join(output, 'user', filename)
+                    jinja(
+                        fullpath,
+                        'user.html',
+                        templates,
+                        user=user,
+                        title=title,
+                        publisher=publisher,
+                    )
             except Exception, e:
                 print e
 if __name__ == '__main__':
