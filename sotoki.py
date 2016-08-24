@@ -16,10 +16,7 @@ Options:
   --version     Show version.
   --directory=<dir>   Specify a directory for xml files [default: work/dump/]
 """
-#PB : 2 lancement de script en meme temps 
-#vider redis
-#=> resumer : avoir un truc genre label pour mes donnees
-
+import uuid
 import redis
 import sqlite3
 import os
@@ -176,7 +173,7 @@ def optimize(filepath):
         exec_cmd('gifsicle -O3 "%s" -o "%s"' % (filepath, filepath), timeout=10)
     else:
         print('* unknown file extension %s' % filepath)
-def comments(templates, output_tmp, dump_path):
+def comments(templates, output_tmp, dump_path, uuid):
     print "Load and render comments"
     os.makedirs(os.path.join(output_tmp, 'comments'))
     r = redis.Redis('localhost')
@@ -187,7 +184,7 @@ def comments(templates, output_tmp, dump_path):
                 comment = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
                 if comment != {}:
                     if comment.has_key("UserId"):
-                        comment["UserDisplayName"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall("user" + str(comment["UserId"])).items())["DisplayName"]
+                        comment["UserDisplayName"] = dict((k.decode('utf8'), v.decode('utf8')) for k, v in r.hgetall(uuid + "user" + str(comment["UserId"])).items())["DisplayName"]
                     filename = '%s.html' % comment["Id"]
                     filepath = os.path.join(output_tmp, 'comments', filename)
                     try:
@@ -201,12 +198,12 @@ def comments(templates, output_tmp, dump_path):
                         print ' * failed to generate comments: %s' % filename
                         print e
     
-                    r.rpush("post" + str(comment["PostId"]) + "comments" , os.path.join("tmp" , "comments" , filename ))
+                    r.rpush(uuid + "post" + str(comment["PostId"]) + "comments" , os.path.join("tmp" , "comments" , filename ))
             except Exception, e:
                     print 'fail in a comments'
                     print e
 
-def post_type2(templates, output_tmp, dump_path):
+def post_type2(templates, output_tmp, dump_path,uuid):
     print "First passage to posts.xml"
     os.makedirs(os.path.join(output_tmp, 'post'))
     r = redis.Redis('localhost')
@@ -218,10 +215,10 @@ def post_type2(templates, output_tmp, dump_path):
                 #post = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values()))) 
                 if post != {} and int(post["PostTypeId"]) == 2:
                     if post.has_key("OwnerUserId"):
-                        post["OwnerUserId"] =   dict_to_unicodedict(r.hgetall("user" + str(post["OwnerUserId"])))
+                        post["OwnerUserId"] =   dict_to_unicodedict(r.hgetall( uuid + "user" + str(post["OwnerUserId"])))
                     else:
                         post["OwnerUserId"] = { "DisplayName" : post["OwnerDisplayName"].decode('utf8') }
-                    commentaires = r.lrange("post" + str(post["Id"]) + "comments", 0, -1 )
+                    commentaires = r.lrange(uuid + "post" + str(post["Id"]) + "comments", 0, -1 )
                     if commentaires != []:
                             post["comments"] = commentaires 
                 
@@ -238,13 +235,13 @@ def post_type2(templates, output_tmp, dump_path):
                         print ' * failed to generate post2: %s' % filename
                         print e
                         print post
-                    r.rpush("post" + str(post["ParentId"]) + "post2" , os.path.join("tmp" , "post" , filename ))
+                    r.rpush(uuid + "post" + str(post["ParentId"]) + "post2" , os.path.join("tmp" , "post" , filename ))
                 elif post != {} and int(post["PostTypeId"]) == 1:
-                    r.set("post" + str(post["Id"]) + "title", post["Title"])
+                    r.set(uuid + "post" + str(post["Id"]) + "title", post["Title"])
             except Exception, e:
                     print 'fail in a post2' + str(e)
                     print post
-def render_questions(templates, database, output, title, publisher, dump, cores):
+def render_questions(templates, database, output, title, publisher, dump, cores, uuid):
     r = redis.Redis('localhost') 
     # wrap the actual database
     print 'render questions'
@@ -272,16 +269,16 @@ def render_questions(templates, database, output, title, publisher, dump, cores)
                         sql = "INSERT INTO QuestionTag(Score, Title, CreationDate, Tag) VALUES(?, ?, ?, ?)"
                         cursor.execute(sql, (question["Score"], question["Title"], question["CreationDate"], t))
                     if question.has_key("OwnerUserId"):
-                        question["OwnerUserId"] = dict_to_unicodedict(r.hgetall("user" + str(question["OwnerUserId"])))
+                        question["OwnerUserId"] = dict_to_unicodedict(r.hgetall(uuid + "user" + str(question["OwnerUserId"])))
                     else:
                         question["OwnerUserId"] = { "DisplayName" : question["OwnerDisplayName"].decode('utf8') }
 
-                    question["comments"] = r.lrange("post" + str(question["Id"]) + "comments", 0, -1 ) 
-                    question["answers"] =  r.lrange("post" + str(question["Id"]) + "post2", 0, -1 ) 
-                    tmp =  r.lrange("post" + str(question["Id"]) + "link", 0, -1 ) 
+                    question["comments"] = r.lrange(uuid + "post" + str(question["Id"]) + "comments", 0, -1 ) 
+                    question["answers"] =  r.lrange(uuid + "post" + str(question["Id"]) + "post2", 0, -1 ) 
+                    tmp =  r.lrange(uuid + "post" + str(question["Id"]) + "link", 0, -1 ) 
                     question["relateds"] = []
                     for link in tmp:
-                        name = r.get("post" + link + "title")
+                        name = r.get(uuid + "post" + link + "title")
                         if name is not None:
                             question["relateds"].append(name.decode('utf8'))
                     data_send = [templates, database, output, title, publisher, dump, question, "question.html"]
@@ -293,7 +290,7 @@ def render_questions(templates, database, output, title, publisher, dump, cores)
     for i in range(cores):
         request_queue.put(None)
 
-def posts_links(templates, output_tmp, dump_path):
+def posts_links(templates, output_tmp, dump_path, uuid):
     print "Load links"
     r = redis.Redis('localhost')
     with open(os.path.join(dump_path, "postlinks.xml")) as xml_file:
@@ -302,7 +299,7 @@ def posts_links(templates, output_tmp, dump_path):
             try:
                 link = dict((k.decode('utf8'), v.decode('utf8')) for k, v in dict(zip(row.attrib.keys(), row.attrib.values())).items())
                 if link != {}:
-                    r.rpush("post" + str(link["RelatedPostId"]) + "link" , link["PostId"])
+                    r.rpush(uuid + "post" + str(link["RelatedPostId"]) + "link" , link["PostId"])
             except Exception, e:
                 print "error with link" + str(e)
 
@@ -525,10 +522,14 @@ def dict_to_unicodedict(dictionnary):
         
     return dict_ 
 
-
-def load_user(dump_path, templates, database, output, title, publisher):
-    print "Load and render users"
+def del_redis_keys(uuid):
     r = redis.Redis('localhost')
+    for key in r.scan_iter(uuid + "*"):
+        r.delete(key)
+
+def load_user(dump_path, templates, database, output, title, publisher, uuid):
+    print "Load and render users"
+    r = redis.Redis('localhost')    
     identicon_path = os.path.join(output, 'static', 'identicon')
     os.makedirs(identicon_path)
     os.makedirs(os.path.join(output, 'user'))
@@ -556,8 +557,8 @@ def load_user(dump_path, templates, database, output, title, publisher):
             try:
                 user = dict_to_unicodedict(dict(zip(row.attrib.keys(), row.attrib.values())))  
                 if user != {}:
-                    r.hset("user" + user["Id"], "DisplayName", user["DisplayName"])
-                    r.hset("user" + user["Id"], "Reputation", user["Reputation"])
+                    r.hset(uuid + "user" + user["Id"], "DisplayName", user["DisplayName"])
+                    r.hset(uuid + "user" + user["Id"], "Reputation", user["Reputation"])
                     username = slugify(user["DisplayName"])
 
                     # Generate big identicon
@@ -617,6 +618,7 @@ if __name__ == '__main__':
         if not bin_is_present("zimwriterfs"):
             sys.exit("zimwriterfs is not available, please install it.")
         # load dump into database
+        uuid = str(uuid.uuid1())
         url = arguments['<url>']
         publisher = arguments['<publisher>']
         dump = arguments['--directory']
@@ -629,12 +631,13 @@ if __name__ == '__main__':
         os.makedirs(output_tmp)
         cores = cpu_count() / 2 or 1
         title, description = grab_title_description_favicon(url, output)
-        load_user(dump, templates, database, output, title, publisher)
-        comments(templates, output_tmp, dump)
-        post_type2(templates, output_tmp, dump)
-        posts_links(templates, output_tmp, dump)
-        render_questions(templates, database, output, title, publisher, dump, cores)
+        load_user(dump, templates, database, output, title, publisher, uuid)
+        comments(templates, output_tmp, dump, uuid)
+        post_type2(templates, output_tmp, dump, uuid)
+        posts_links(templates, output_tmp, dump, uuid)
+        render_questions(templates, database, output, title, publisher, dump, cores, uuid)
         render_tags(templates, database, output, title, publisher, dump)
+        del_redis_keys(uuid)
         # copy static
         copy_tree('static', os.path.join('work', 'output', 'static'))
         create_zims(title, publisher, description)
