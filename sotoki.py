@@ -13,6 +13,7 @@ Options:
   --version     Show version.
   --directory=<dir>   Specify a directory for xml files [default: work/dump/]
 """
+import shutil
 import uuid
 import redis
 import sqlite3
@@ -212,14 +213,17 @@ def post_type2(templates, output_tmp, dump_path,uuid):
                 if post != {} and int(post["PostTypeId"]) == 2:
                     if post.has_key("OwnerUserId"):
                         post["OwnerUserId"] =   dict_to_unicodedict(r.hgetall( uuid + "user" + str(post["OwnerUserId"])))
-                    else:
+                    elif  post.has_key("OwnerDisplayName"):
                         post["OwnerUserId"] = { "DisplayName" : post["OwnerDisplayName"].decode('utf8') }
+                    else:
+                        post["OwnerUserId"] = { "DisplayName" : u"None" }
                     commentaires = r.lrange(uuid + "post" + str(post["Id"]) + "comments", 0, -1 )
                     if commentaires != []:
                             post["comments"] = commentaires 
                 
                     filename = '%s.html' % post["Id"]
                     filepath = os.path.join(output_tmp, 'post', filename)
+                    post = image(post, output)
                     try:
                         jinja(
                             filepath,
@@ -266,9 +270,10 @@ def render_questions(templates, database, output, title, publisher, dump, cores,
                         cursor.execute(sql, (question["Score"], question["Title"], question["CreationDate"], t))
                     if question.has_key("OwnerUserId"):
                         question["OwnerUserId"] = dict_to_unicodedict(r.hgetall(uuid + "user" + str(question["OwnerUserId"])))
-                    else:
+                    elif question.has_key("OwnerDisplayName"):
                         question["OwnerUserId"] = { "DisplayName" : question["OwnerDisplayName"].decode('utf8') }
-
+                    else:
+                        question["OwnerUserId"] =  { "DisplayName" : u"None" }
                     question["comments"] = r.lrange(uuid + "post" + str(question["Id"]) + "comments", 0, -1 ) 
                     question["answers"] =  r.lrange(uuid + "post" + str(question["Id"]) + "post2", 0, -1 ) 
                     tmp =  r.lrange(uuid + "post" + str(question["Id"]) + "link", 0, -1 ) 
@@ -283,9 +288,9 @@ def render_questions(templates, database, output, title, publisher, dump, cores,
                 conn.commit()
             except Exception, e:
                 print "error with post type 1" + str(e)
+                print question
     for i in range(cores):
         request_queue.put(None)
-
 def posts_links(templates, output_tmp, dump_path, uuid):
     print "Load links"
     r = redis.Redis('localhost')
@@ -299,45 +304,44 @@ def posts_links(templates, output_tmp, dump_path, uuid):
             except Exception, e:
                 print "error with link" + str(e)
 
-
+def image(post, output):
+    images = os.path.join(output, 'static', 'images') 
+    body = string2html(post['Body'])
+    imgs = body.xpath('//img')
+    for img in imgs:
+        src = img.attrib['src']
+        ext = os.path.splitext(src)[1]
+        filename = sha1(src).hexdigest() + ext
+        out = os.path.join(images, filename)
+        # download the image only if it's not already downloaded
+        if not os.path.exists(out):
+            try:
+                download(src, out)
+            except Exception,e:
+                # do nothing
+                print e
+                pass
+            else:
+                # update post's html
+                src = '../static/images/' + filename
+                img.attrib['src'] = src
+                # finalize offlining
+                try:
+                    resize(out)
+                    optimize(out)
+                except:
+                    print "Something went wrong with" + out
+    # does the post contain images? if so, we surely modified
+    # its content so save it.
+    if imgs:
+        body = html2string(body)
+        post['Body'] = body
+    return post
 
 def some_questions(templates, database, output, title, publisher, dump, question, template_name):
     filename = '%s.html' % slugify(question["Title"])
     filepath = os.path.join(output, 'question', filename)
-    images = os.path.join(output, 'static', 'images')
-    #
-    for post in [question]:
-        body = string2html(post['Body'])
-        imgs = body.xpath('//img')
-        for img in imgs:
-            src = img.attrib['src']
-            ext = os.path.splitext(src)[1]
-            filename = sha1(src).hexdigest() + ext
-            out = os.path.join(images, filename)
-            # download the image only if it's not already downloaded
-            if not os.path.exists(out):
-                try:
-                    download(src, out)
-                except:
-                    # do nothing
-                    pass
-                else:
-                    # update post's html
-                    src = '../static/images/' + filename
-                    img.attrib['src'] = src
-                    # finalize offlining
-                    try:
-                        resize(out)
-                        optimize(out)
-                    except:
-                        print "Something went wrong with" + out
-        # does the post contain images? if so, we surely modified
-        # its content so save it.
-        if imgs:
-            body = html2string(body)
-            post['Body'] = body
-
-    #
+    question = image(question,output)
     try:
         jinja(
             filepath,
@@ -523,6 +527,7 @@ def del_redis_keys(uuid):
     for key in r.scan_iter(uuid + "*"):
         r.delete(key)
 
+
 def load_user(dump_path, templates, database, output, title, publisher, uuid):
     print "Load and render users"
     r = redis.Redis('localhost')    
@@ -603,6 +608,7 @@ if __name__ == '__main__':
         os.makedirs(output)
         output_tmp= os.path.join('templates', 'tmp')
         os.makedirs(output_tmp)
+        os.makedirs(os.path.join(output, 'static', 'images'))
         cores = cpu_count() / 2 or 1
         title, description = grab_title_description_favicon(url, output)
         load_user(dump, templates, database, output, title, publisher, uuid)
@@ -612,6 +618,9 @@ if __name__ == '__main__':
         render_questions(templates, database, output, title, publisher, dump, cores, uuid)
         render_tags(templates, database, output, title, publisher, dump)
         del_redis_keys(uuid)
+        #remove tmp files
+        #we have to wait until render uestion in done 
+        #shutil.rmtree(output_tmp)
         # copy static
         copy_tree('static', os.path.join('work', 'output', 'static'))
         create_zims(title, publisher, description)
