@@ -13,6 +13,7 @@ Options:
   --version     Show version.
   --directory=<dir>   Specify a directory for xml files [default: work/dump/]
 """
+import time
 import shutil
 import uuid
 import redis
@@ -67,12 +68,11 @@ class Worker(Process):
     def run(self):
         for data in iter(self.queue.get, None):
             try:
-                some_questions(*data)
+                data[0](*data[1:])
+                #some_questions(*data)
             except Exception as exc:
                 print 'error while rendering question:', data[-1]['Id']
                 print exc
-
-
 # templating
 
 def intspace(value):
@@ -171,10 +171,18 @@ def optimize(filepath):
         exec_cmd('gifsicle -O3 "%s" -o "%s"' % (filepath, filepath), timeout=10)
     else:
         print('* unknown file extension %s' % filepath)
-def comments(templates, output_tmp, dump_path, uuid):
+def comments(templates, output_tmp, dump_path, cores, uuid):
     print "Load and render comments"
     os.makedirs(os.path.join(output_tmp, 'comments'))
     r = redis.Redis('localhost')
+    request_queue = Queue()
+    workers = []
+    for i in range(cores):
+        workers.append(Worker(request_queue))
+        
+    for i in workers:
+        i.start()
+
     with open(os.path.join(dump_path, "comments.xml")) as xml_file:
         tree = etree.iterparse(xml_file)
         for events, row in tree:
@@ -185,26 +193,32 @@ def comments(templates, output_tmp, dump_path, uuid):
                         comment["UserDisplayName"] = dict_to_unicodedict(r.hgetall(uuid + "user" + str(comment["UserId"])))["DisplayName"]
                     filename = '%s.html' % comment["Id"]
                     filepath = os.path.join(output_tmp, 'comments', filename)
-                    try:
-                        jinja(
-                            filepath,
-                            'comment.html',
-                            templates,
-                            comment=comment,
-                        )
-                    except Exception, e:
-                        print ' * failed to generate comments: %s' % filename
-                        print e
-    
+                    data_send = [some_comments, output_tmp, comment, filepath]
+                    request_queue.put(data_send)
+                    #some_comments(output_tmp,comment)
                     r.rpush(uuid + "post" + str(comment["PostId"]) + "comments" , os.path.join("tmp" , "comments" , filename ))
             except Exception, e:
                     print 'fail in a comments'
                     print e
+    for i in range(cores):
+        request_queue.put(None)
+    for i in workers: 
+        i.join()
 
-def post_type2(templates, output_tmp, dump_path,uuid):
+
+def post_type2(templates, output_tmp, dump_path, cores, uuid):
     print "First passage to posts.xml"
     os.makedirs(os.path.join(output_tmp, 'post'))
     r = redis.Redis('localhost')
+    request_queue = Queue()
+    workers = []
+    for i in range(cores):
+        workers.append(Worker(request_queue))
+        
+    for i in workers:
+        i.start()
+
+
     with open(os.path.join(dump_path, "posts.xml")) as xml_file:
         tree = etree.iterparse(xml_file)
         for events, row in tree:
@@ -223,24 +237,20 @@ def post_type2(templates, output_tmp, dump_path,uuid):
                 
                     filename = '%s.html' % post["Id"]
                     filepath = os.path.join(output_tmp, 'post', filename)
-                    post = image(post, output)
-                    try:
-                        jinja(
-                            filepath,
-                            'post.mixin.html',
-                            templates,
-                            post=post,
-                        )
-                    except Exception, e:
-                        print ' * failed to generate post2: %s' % filename
-                        print e
-                        print post
+                    data_send = [some_post2, output_tmp,post, filepath, output ]
+                    request_queue.put(data_send)
                     r.rpush(uuid + "post" + str(post["ParentId"]) + "post2" , os.path.join("tmp" , "post" , filename ))
                 elif post != {} and int(post["PostTypeId"]) == 1:
                     r.set(uuid + "post" + str(post["Id"]) + "title", post["Title"])
             except Exception, e:
                     print 'fail in a post2' + str(e)
                     print post
+    for i in range(cores):
+        request_queue.put(None)
+    for i in workers: 
+        i.join()
+
+
 def render_questions(templates, database, output, title, publisher, dump, cores, uuid):
     r = redis.Redis('localhost') 
     # wrap the actual database
@@ -255,8 +265,12 @@ def render_questions(templates, database, output, title, publisher, dump, cores,
     conn.commit()
     os.makedirs(os.path.join(output, 'question'))
     request_queue = Queue()
+    workers = []
     for i in range(cores):
-        Worker(request_queue).start()
+        workers.append(Worker(request_queue))
+        
+    for i in workers:
+        i.start()
 
     with open(os.path.join(dump, "posts.xml")) as xml_file:
         tree = etree.iterparse(xml_file)
@@ -282,7 +296,7 @@ def render_questions(templates, database, output, title, publisher, dump, cores,
                         name = r.get(uuid + "post" + link + "title")
                         if name is not None:
                             question["relateds"].append(name.decode('utf8'))
-                    data_send = [templates, database, output, title, publisher, dump, question, "question.html"]
+                    data_send = [some_questions , templates, database, output, title, publisher, dump, question, "question.html"]
                     request_queue.put(data_send)
                     #some_questions(templates, database, output, title, publisher, dump, question, "question.html" )
                 conn.commit()
@@ -291,6 +305,10 @@ def render_questions(templates, database, output, title, publisher, dump, cores,
                 print question
     for i in range(cores):
         request_queue.put(None)
+    for i in workers: 
+        i.join()
+
+
 def posts_links(templates, output_tmp, dump_path, uuid):
     print "Load links"
     r = redis.Redis('localhost')
@@ -355,6 +373,33 @@ def some_questions(templates, database, output, title, publisher, dump, question
     except Exception, e:
         print ' * failed to generate: %s' % filename
         print "erreur jinja" + str(e)
+        print question
+
+def some_comments(output_tmp,comment, filepath):
+            try:
+                jinja(
+                    filepath,
+                    'comment.html',
+                    templates,
+                    comment=comment,
+                )
+            except Exception as exc:
+                print 'error while rendering comment:', comment['Id']
+                print exc
+
+
+def some_post2(output_tmp,post, filepath, output):
+    post = image(post, output)
+    try:
+        jinja(
+            filepath,
+            'post.mixin.html',
+            templates,
+            post=post,
+        )
+    except Exception as exc:
+                print 'error while rendering post answers:', post['Id']
+                print exc
 
 
 def render_tags(templates, database, output, title, publisher, dump):
@@ -612,15 +657,14 @@ if __name__ == '__main__':
         cores = cpu_count() / 2 or 1
         title, description = grab_title_description_favicon(url, output)
         load_user(dump, templates, database, output, title, publisher, uuid)
-        comments(templates, output_tmp, dump, uuid)
-        post_type2(templates, output_tmp, dump, uuid)
+        comments(templates, output_tmp, dump, cores, uuid)
+        post_type2(templates, output_tmp, dump, cores,uuid)
         posts_links(templates, output_tmp, dump, uuid)
         render_questions(templates, database, output, title, publisher, dump, cores, uuid)
         render_tags(templates, database, output, title, publisher, dump)
         del_redis_keys(uuid)
         #remove tmp files
-        #we have to wait until render uestion in done 
-        #shutil.rmtree(output_tmp)
+        shutil.rmtree(output_tmp)
         # copy static
         copy_tree('static', os.path.join('work', 'output', 'static'))
         create_zims(title, publisher, description)
