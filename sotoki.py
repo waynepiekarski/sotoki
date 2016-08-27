@@ -4,7 +4,6 @@
 
 Usage:
   sotoki.py run <url> <publisher> [--directory=<dir>]
-  sotoki.py benchmark <work>
   sotoki.py (-h | --help)
   sotoki.py --version
 
@@ -111,7 +110,7 @@ def scale(number):
     return 'verygood'
 
 
-def jinja(output, template, templates, **context):
+def jinja(output, template, templates, raw, **context):
     templates = os.path.abspath(templates)
     env = Environment(loader=FileSystemLoader((templates,)))
     filters = dict(
@@ -124,22 +123,21 @@ def jinja(output, template, templates, **context):
     env.filters.update(filters)
     template = env.get_template(template)
     page = template.render(**context)
+    if raw:
+        page = "{% raw %}" + page + "{% endraw %}"
     with open(output, 'w') as f:
         f.write(page.encode('utf-8'))
-
 
 def iterate(filepath):
     items = string2xml(filepath).getroot()
     for index, item in enumerate(items.iterchildren()):
         yield item.attrib
 
-
 def download(url, output):
     response = urlopen(url)
     output_content = response.read()
     with open(output, 'w') as f:
         f.write(output_content)
-
 
 def resize(filepath):
     exts = ('.jpg', '.jpeg', '.JPG', '.JPEG', '.png', '.PNG', '.gif', '.GIF')
@@ -171,6 +169,7 @@ def optimize(filepath):
         exec_cmd('gifsicle -O3 "%s" -o "%s"' % (filepath, filepath), timeout=10)
     else:
         print('* unknown file extension %s' % filepath)
+
 def comments(templates, output_tmp, dump_path, cores, uuid):
     print "Load and render comments"
     os.makedirs(os.path.join(output_tmp, 'comments'))
@@ -365,6 +364,7 @@ def some_questions(templates, database, output, title, publisher, dump, question
             filepath,
             template_name,
             templates,
+            False,
             question=question,
             rooturl="..",
             title=title,
@@ -381,6 +381,7 @@ def some_comments(output_tmp,comment, filepath):
                     filepath,
                     'comment.html',
                     templates,
+                    True,
                     comment=comment,
                 )
             except Exception as exc:
@@ -395,6 +396,7 @@ def some_post2(output_tmp,post, filepath, output):
             filepath,
             'post.mixin.html',
             templates,
+            True,
             post=post,
         )
     except Exception as exc:
@@ -425,6 +427,7 @@ def render_tags(templates, database, output, title, publisher, dump):
         os.path.join(output, 'index.html'),
         'tags.html',
         templates,
+        False,
         tags=tags,
         rooturl=".",
         title=title,
@@ -456,6 +459,7 @@ def render_tags(templates, database, output, title, publisher, dump):
                 fullpath,
                 'tag.html',
                 templates,
+                False,
                 tag=tag,
                 index=page,
                 questions=questions,
@@ -630,6 +634,7 @@ def load_user(dump_path, templates, database, output, title, publisher, uuid):
                         fullpath,
                         'user.html',
                         templates,
+                        False,
                         user=user,
                         title=title,
                         publisher=publisher,
@@ -668,47 +673,4 @@ if __name__ == '__main__':
         # copy static
         copy_tree('static', os.path.join('work', 'output', 'static'))
         create_zims(title, publisher, description)
-    elif arguments['benchmark']:
-        print '* Running benchmark for sqlite'
-        work = arguments['<work>']
-        database_path = work
-        dump_database_name = 'se-dump.db'
 
-        create_query = 'CREATE TABLE IF NOT EXISTS {table} ({fields})'
-        insert_query = 'INSERT INTO {table} ({columns}) VALUES ({values})'
-
-        db = sqlite3.connect(os.path.join(database_path, dump_database_name))
-
-        file = 'posts'
-        spec = ANATHOMY[file]
-        with open(os.path.join(work, 'dump', 'Posts.xml')) as xml_file:
-            tree = etree.iterparse(xml_file)
-            table_name = file
-            sql_create = create_query.format(
-                table=table_name,
-                fields=", ".join(['{0} {1}'.format(name, type) for name, type in spec.items()])
-            )
-            
-            db.execute(sql_create)
-
-            for events, row in tree:
-                if row.attrib.values():
-                    logging.debug(row.attrib.keys())
-                    query = insert_query.format(
-                        table=table_name,
-                        columns=', '.join(row.attrib.keys()),
-                        values=('?, ' * len(row.attrib.keys()))[:-2])
-                    db.execute(query, row.attrib.values())
-                    row.clear()
-            db.commit()
-
-        db = os.path.join(work, 'se-dump.db')
-        conn = sqlite3.connect(db)
-        conn.row_factory = dict_factory
-        cursor = conn.cursor()
-        # create table tags-questions
-        sql = "CREATE TABLE IF NOT EXISTS questiontag(id INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE, Score INTEGER, Title TEXT, CreationDate TEXT, Tag TEXT)"
-        cursor.execute(sql)
-        conn.commit()
-
-        questions = cursor.execute("SELECT * FROM posts").fetchall()
