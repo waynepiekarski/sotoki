@@ -190,6 +190,8 @@ def comments(templates, output_tmp, dump_path, cores, uuid):
                 if comment != {}:
                     if comment.has_key("UserId"):
                         comment["UserDisplayName"] = dict_to_unicodedict(r.hgetall(uuid + "user" + str(comment["UserId"])))["DisplayName"]
+                    if not comment.has_key("UserId") and not comment.has_key("UserDisplayName"):
+                        comment["UserDisplayName"] = u"None"
                     filename = '%s.html' % comment["Id"]
                     filepath = os.path.join(output_tmp, 'comments', filename)
                     data_send = [some_comments, output_tmp, comment, filepath]
@@ -561,6 +563,8 @@ def bin_is_present(binary):
 
 def dict_to_unicodedict(dictionnary):
     dict_ = {}
+    if dictionnary.has_key("OwnerDisplayName"):
+        dictionnary["OwnerDisplayName"] = u""
     for k, v in dictionnary.items():
         unicode_key = k.decode('utf8')
         if isinstance(v, unicode):
