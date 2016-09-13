@@ -72,7 +72,7 @@ DEBUG = os.environ.get('DEBUG')
 # multiprocessing helper
 
 class Worker(Process):
-    
+
     def __init__(self, queue, function):
         super(Worker, self).__init__()
         self.queue = queue
@@ -459,18 +459,24 @@ def scale(number):
     return 'verygood'
 
 
+ENV = None  # Jinja environment singleton
+
 def jinja(output, template, templates, **context):
-    templates = os.path.abspath(templates)
-    env = Environment(loader=FileSystemLoader((templates,)))
-    filters = dict(
-        markdown=markdown,
-        intspace=intspace,
-        scale=scale,
-        clean=lambda y: filter(lambda x: x not in punctuation, y),
-        slugify=slugify,
-    )
-    env.filters.update(filters)
-    template = env.get_template(template)
+    global ENV
+    # XXX: make the environment a singleton otherwise it creates a memory leak
+    if ENV is None:
+        templates = os.path.abspath(templates)
+        ENV = Environment(loader=FileSystemLoader((templates,)))
+        filters = dict(
+            markdown=markdown,
+            intspace=intspace,
+            scale=scale,
+            clean=lambda y: filter(lambda x: x not in punctuation, y),
+            slugify=slugify,
+        )
+        ENV.filters.update(filters)
+
+    template = ENV.get_template(template)
     page = template.render(**context)
     with open(output, 'w') as f:
         f.write(page.encode('utf-8'))
@@ -707,7 +713,7 @@ def render_questions(work, title, publisher, cores):
                         if answers.get_key() == question.Id:
                             continue
                     break
-            
+
             answers.reset()
             # get links
             question.links = list()
@@ -747,7 +753,7 @@ def render_questions(work, title, publisher, cores):
 
     for worker in workers:
         queue.put(None)
-        
+
     for worker in workers:
         worker.join()
 
