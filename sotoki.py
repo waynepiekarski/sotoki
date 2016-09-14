@@ -22,7 +22,6 @@ from itertools import chain
 from time import sleep
 from time import time
 from collections import OrderedDict
-import xml.etree.cElementTree as etree
 import logging
 
 import re
@@ -42,6 +41,7 @@ from wiredtiger import wiredtiger_open
 from jinja2 import Environment
 from jinja2 import FileSystemLoader
 
+from lxml.etree import iterparse
 from lxml.etree import parse as string2xml
 from lxml.html import fromstring as string2html
 from lxml.html import tostring as html2string
@@ -354,7 +354,7 @@ class TagPost(Element):
 
 def iterate(filepath):
     with open(filepath) as f:
-        tree = etree.iterparse(f)
+        tree = iterparse(f)
         for event, row in tree:
             if event == 'end' and row.tag == 'row':
                 yield {key: row.get(key) for key in row.keys()}
