@@ -109,19 +109,23 @@ def scale(number):
         return 'good'
     return 'verygood'
 
+ENV = None  # Jinja environment singleton
 
 def jinja(output, template, templates, raw, **context):
-    templates = os.path.abspath(templates)
-    env = Environment(loader=FileSystemLoader((templates,)))
-    filters = dict(
-        markdown=markdown,
-        intspace=intspace,
-        scale=scale,
-        clean=lambda y: filter(lambda x: x not in punctuation, y),
-        slugify=slugify,
-    )
-    env.filters.update(filters)
-    template = env.get_template(template)
+    global ENV
+    if ENV is None:
+        templates = os.path.abspath(templates)
+        ENV = Environment(loader=FileSystemLoader((templates,)))
+        filters = dict(
+            markdown=markdown,
+            intspace=intspace,
+            scale=scale,
+            clean=lambda y: filter(lambda x: x not in punctuation, y),
+            slugify=slugify,
+        )
+        ENV.filters.update(filters)
+    
+    template = ENV.get_template(template)
     page = template.render(**context)
     if raw:
         page = "{% raw %}" + page + "{% endraw %}"
