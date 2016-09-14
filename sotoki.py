@@ -358,7 +358,12 @@ def iterate(filepath):
         for event, row in tree:
             if event == 'end' and row.tag == 'row':
                 yield {key: row.get(key) for key in row.keys()}
-
+                # XXX: don't forget to clean
+                # cf. http://stackoverflow.com/a/9814580/140837
+                row.clear()
+                # second, delete previous siblings 
+                while row.getprevious() is not None:
+                    del row.getparent()[0]
 
 def load(work):
     # prepare paths
