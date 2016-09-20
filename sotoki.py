@@ -482,7 +482,7 @@ def render_tags(templates, database, output, title, publisher, dump):
 
 def grab_title_description_favicon(url, output_dir):
     output = urlopen(url).read()
-    soup = BeautifulSoup.BeautifulSoup(output)
+    soup = BeautifulSoup.BeautifulSoup(output, 'html.parser')
     title = soup.find('meta', attrs={"name": u"twitter:title"})['content']
     description = soup.find('meta', attrs={"name": u"twitter:description"})['content']
     favicon = soup.find('link', attrs={"rel": u"image_src"})['href']
