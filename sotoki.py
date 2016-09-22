@@ -185,6 +185,7 @@ def comments(templates, output_tmp, dump_path, cores, uuid):
                     request_queue.put(data_send)
                     #some_comments(output_tmp,comment)
                     r.rpush(uuid + "post" + str(comment["PostId"]) + "comments" , os.path.join("tmp" , "comments" , filename ))
+                    row.clear()
             except Exception, e:
                     print 'fail in a comments'
                     print e
@@ -230,6 +231,7 @@ def post_type2(templates, output_tmp, dump_path, cores, uuid):
                     r.rpush(uuid + "post" + str(post["ParentId"]) + "post2" , os.path.join("tmp" , "post" , filename ))
                 elif post != {} and int(post["PostTypeId"]) == 1:
                     r.set(uuid + "post" + str(post["Id"]) + "title", post["Title"])
+                row.clear()
             except Exception, e:
                     print 'fail in a post2' + str(e)
                     print post
@@ -288,6 +290,7 @@ def render_questions(templates, database, output, title, publisher, dump, cores,
                     request_queue.put(data_send)
                     #some_questions(templates, database, output, title, publisher, dump, question, "question.html" )
                 conn.commit()
+                row.clear()
             except Exception, e:
                 print "error with post type 1" + str(e)
                 print question
@@ -629,6 +632,7 @@ def load_user(dump_path, templates, database, output, title, publisher, uuid):
                         title=title,
                         publisher=publisher,
                     )
+                row.clear()
             except Exception, e:
                 print e
 
