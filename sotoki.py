@@ -157,23 +157,6 @@ def resize(filepath):
         img.save(filepath, img.format)
 
 
-def optimize(filepath):
-    # based on mwoffliner code http://bit.ly/1HZgZeP
-    ext = os.path.splitext(filepath)[1]
-    if ext in ('.jpg', '.jpeg', '.JPG', '.JPEG'):
-        exec_cmd('jpegoptim --strip-all -m50 "%s"' % filepath, timeout=10)
-    elif ext in ('.png', '.PNG'):
-        # run pngquant
-        cmd = 'pngquant --verbose --nofs --force --ext="%s" "%s"'
-        cmd = cmd % (ext, filepath)
-        exec_cmd(cmd, timeout=10)
-        # run advancecomp
-        exec_cmd('advdef -q -z -4 -i 5 "%s"' % filepath, timeout=10)
-    elif ext in ('.gif', '.GIF'):
-        exec_cmd('gifsicle -O3 "%s" -o "%s"' % (filepath, filepath), timeout=10)
-    else:
-        print('* unknown file extension %s' % filepath)
-
 def comments(templates, output_tmp, dump_path, cores, uuid):
     print "Load and render comments"
     os.makedirs(os.path.join(output_tmp, 'comments'))
@@ -351,7 +334,6 @@ def image(post, output):
                 # finalize offlining
                 try:
                     resize(out)
-                    optimize(out)
                 except:
                     print "Something went wrong with" + out
     # does the post contain images? if so, we surely modified
@@ -503,7 +485,7 @@ def resize_image_profile(image_path):
 def exec_cmd(cmd, timeout=None):
     try:
         check_output(shlex.split(cmd), timeout=timeout)
-    except TimeoutExpired:
+    except:
         pass
 
 def create_zims(title, publisher, description):
@@ -649,6 +631,18 @@ def load_user(dump_path, templates, database, output, title, publisher, uuid):
                     )
             except Exception, e:
                 print e
+
+def optimize(output):
+    print "optimize images"
+    print "jpegoptim --strip-all -m50 " + output + "/*.{jpg,jpeg}"
+    exec_cmd("jpegoptim --strip-all -m50 " + output + "/*.{jpg,jpeg}", timeout=None)
+    print "pngquant --verbose --nofs --force --ext=.png " + output + "/*.png"
+    exec_cmd("pngquant --verbose --nofs --force --ext=.png " + output + "/*.png", timeout=None)
+    print "advdef -q -z -4 -i 5  " + output + "/*.png"
+    exec_cmd("advdef -q -z -4 -i 5  " + output + "/*.png", timeout=None)
+    print "gifsicle --batch -O3 -i " + output + "/*.gif"
+    exec_cmd("gifsicle --batch -O3 -i " + output + "/*.gif", timeout=None)
+
 if __name__ == '__main__':
     arguments = docopt(__doc__, version='sotoki 0.1')
     if arguments['run']:
@@ -679,6 +673,7 @@ if __name__ == '__main__':
         #remove tmp files
         shutil.rmtree(output_tmp)
         # copy static
+        optimize(os.path.join(output, 'static', 'images'))
         copy_tree('static', os.path.join('work', 'output', 'static'))
         create_zims(title, publisher, description)
 
