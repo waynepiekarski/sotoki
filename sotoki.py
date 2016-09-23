@@ -143,20 +143,6 @@ def download(url, output):
     with open(output, 'w') as f:
         f.write(output_content)
 
-def resize(filepath):
-    exts = ('.jpg', '.jpeg', '.JPG', '.JPEG', '.png', '.PNG', '.gif', '.GIF')
-    if os.path.splitext(filepath)[1] in exts:
-        img = Image.open(filepath)
-        w, h = img.size
-        if w >= 540:
-            # hardcoded size based on website layout
-            try:
-                img = resizeimage.resize_width(img, 540, Image.ANTIALIAS)
-            except:
-                print "Problem with image : " + filepath
-        img.save(filepath, img.format)
-
-
 def comments(templates, output_tmp, dump_path, cores, uuid):
     print "Load and render comments"
     os.makedirs(os.path.join(output_tmp, 'comments'))
@@ -335,10 +321,6 @@ def image(post, output):
                 src = '../static/images/' + filename
                 img.attrib['src'] = src
                 # finalize offlining
-                try:
-                    resize(out)
-                except:
-                    print "Something went wrong with" + out
     # does the post contain images? if so, we surely modified
     # its content so save it.
     if imgs:
@@ -646,7 +628,9 @@ def optimize(output):
     exec_cmd("advdef -q -z -4 -i 5  " + output + "/*.png", timeout=None)
     print "gifsicle --batch -O3 -i " + output + "/*.gif"
     exec_cmd("gifsicle --batch -O3 -i " + output + "/*.gif", timeout=None)
-
+def resize(output):
+    print "Resize image"
+    exec_cmd("mogrify -resize 540x\> " + output + "/*.{jpg,jpeg,png,gif}", timeout=None)
 if __name__ == '__main__':
     arguments = docopt(__doc__, version='sotoki 0.1')
     if arguments['run']:
@@ -677,6 +661,7 @@ if __name__ == '__main__':
         #remove tmp files
         shutil.rmtree(output_tmp)
         # copy static
+        resize(os.path.join(output, 'static', 'images'))
         optimize(os.path.join(output, 'static', 'images'))
         copy_tree('static', os.path.join('work', 'output', 'static'))
         create_zims(title, publisher, description)
