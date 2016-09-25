@@ -25,6 +25,17 @@ Install non-python dependencies:
 sudo apt-get install jpegoptim pngquant gifsicle advancecomp python-pip python-virtualenv python-dev libxml2-dev libxslt1-dev libbz2-dev p7zip-full
 ```
 
+Install `libzim` and `zimwriterfs` from `openzim` repository with its
+dependencies:
+
+```
+git clone https://gerrit.wikimedia.org/r/p/openzim.git
+cd openzim/zimlib
+./autogen.sh && ./configure && make && sudo make install
+cd ../zimwriterfs/
+sudo apt install libgumbo-dev libmagic-dev libxapian-1.3-dev
+```
+
 Create a virtual environment for python:
 
 ```
