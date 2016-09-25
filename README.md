@@ -19,10 +19,10 @@ Clone this repository:
 git clone https://github.com/kiwix/sotoki.git
 ```
 
-Install non python dependencies:
+Install non-python dependencies:
 
 ```
-sudo apt-get install jpegoptim pngquant gifsicle advancecomp python-pip python-virtualenv python-dev libxml2-dev libxslt1-dev libbz2-dev
+sudo apt-get install jpegoptim pngquant gifsicle advancecomp python-pip python-virtualenv python-dev libxml2-dev libxslt1-dev libbz2-dev p7zip-full
 ```
 
 Create a virtual environment for python:
@@ -50,14 +50,11 @@ mkdir -p work/dump/
 cp superuser.com.7z work/dump/
 cd work/dump
 7z e superuser.com.7z
-rename 'y/A-Z/a-z/' *
 ```
 
 Go back at the sotoki root and run the pipeline:
 
 ```
-python sotoki.py run [url of stackechange website] [publisher] [--directory (optional)]
+python sotoki.py run [work directory] [url of stackoverflow website] [publisher name]
 
 ```
-
-It's use https://github.com/testlnord/sedumpy
