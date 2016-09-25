@@ -1052,10 +1052,8 @@ def create_zim(static_folder, zim_path, title, description, lang_input, publishe
            .format(**context))
     print cmd
 
-    if exec_cmd(cmd) == 0:
-        print "Successfuly created ZIM file at {}".format(zim_path)
-    else:
-        print "Unable to create ZIM file :("
+    exec_cmd(cmd)
+    print "Successfuly created ZIM file at {}".format(zim_path)
 
 
 def bin_is_present(binary):
