@@ -488,7 +488,7 @@ def jinja(output, template, templates, **context):
 
 
 def download(url, output):
-    response = urlopen(url)
+    response = urlopen(url, timeout=30)
     output_content = response.read()
     with open(output, 'w') as f:
         f.write(output_content)
