@@ -650,7 +650,7 @@ def render_question(args):
                     # finalize offlining
                     try:
                         resize(out)
-                        optimize(out)
+                        # optimize(out)
                     except Exception as exc:
                         print "resize or optimize of {} failed".format(src)
                         print exc
