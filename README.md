@@ -25,6 +25,18 @@ Install non-python dependencies:
 sudo apt-get install jpegoptim pngquant gifsicle advancecomp python-pip python-virtualenv python-dev libxml2-dev libxslt1-dev libbz2-dev p7zip-full
 ```
 
+Install `wiredtiger`:
+
+```
+git clone https://github.com/wiredtiger/wiredtiger
+cd wiredtiger
+git checkout develop
+./autogen.sh
+./configure --enable-python
+make
+sudo make install
+```
+
 Install `libzim` and `zimwriterfs` from `openzim` repository with its
 dependencies:
 
