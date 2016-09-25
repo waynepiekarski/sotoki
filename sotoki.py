@@ -1071,8 +1071,8 @@ def bin_is_present(binary):
 if __name__ == '__main__':
     args = docopt(__doc__, version='sotoki 0.3')
     if args['run']:
-        # if not bin_is_present("zimwriterfs"):
-        #     sys.exit("zimwriterfs is not available, please install it.")
+        if not bin_is_present("zimwriterfs"):
+            sys.exit("zimwriterfs is not available, please install it.")
         cores = cpu_count() - 1 or 1
         work = args['<work>']
         url = args['<url>']
@@ -1092,7 +1092,7 @@ if __name__ == '__main__':
         render_users(work, title, publisher, cores)
         # copy static
         copy_tree('static', os.path.join(work, 'build', 'static'))
-        # create_zims(work, title, publisher, description)
+        create_zims(work, title, publisher, description)
     elif args['benchmark']:
         if args['xml']:
             print('* Running benchmark for lxml')
