@@ -23,6 +23,8 @@ from time import sleep
 from time import time
 from collections import OrderedDict
 import logging
+from shutil import rmtree
+
 
 import re
 import os.path
@@ -370,12 +372,15 @@ def load(work):
     dump = os.path.join(work, 'dump')
     db = os.path.join(work, 'db')
 
+    print('* loading dump')
+    os.makedirs(db)
+    
     # prepare wiredtiger
     connection = wiredtiger_open(db, "create")
     session = connection.open_session(None)
     # load Post and TagPost
     filepath = os.path.join(dump, Post.filename())
-    print('* loading {}'.format(filepath))
+    print('** loading {}'.format(filepath))
     # create post table
     session.create(Post.table(), Post.format())
     for index, columns in Post.indices_format():
@@ -411,7 +416,7 @@ def load(work):
     # load others
     for klass in [Badge, Comment, PostLink, User, Tag]:
         filepath = os.path.join(dump, klass.filename())
-        print('* loading {}'.format(filepath))
+        print('** loading {}'.format(filepath))
         session.create(klass.table(), klass.format())
         for index, columns in klass.indices_format():
             session.create(index, columns)
@@ -1077,11 +1082,20 @@ if __name__ == '__main__':
         work = args['<work>']
         url = args['<url>']
         publisher = args['<publisher>']
+        build = os.path.join('work', 'build')
+        # clean repositories
+        try:
+            rmtree(os.path.join(work, 'db'))
+        except OSError:
+            pass
+        try:
+            rmtree(build)
+        except OSError:
+            pass
         # load dump into database
         load(work)
         # render templates into `output`
         templates = 'templates'
-        build = os.path.join('work', 'build')
         try:
             os.makedirs(build)
         except:
