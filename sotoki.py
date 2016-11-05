@@ -649,8 +649,9 @@ def render_question(args):
                     img.attrib['src'] = src
                     # finalize offlining
                     try:
-                        resize(out)
+                        # resize(out)
                         # optimize(out)
+                        pass
                     except Exception as exc:
                         print "resize or optimize of {} failed".format(src)
                         print exc
