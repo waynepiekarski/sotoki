@@ -1,4 +1,4 @@
-set term png small size 1024,1024
+set term png small size 1280,1024
 set output "out.png"
 
 set ylabel "VSZ"
