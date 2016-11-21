@@ -363,7 +363,7 @@ def iterate(filepath):
                 # XXX: don't forget to clean
                 # cf. http://stackoverflow.com/a/9814580/140837
                 row.clear()
-                # second, delete previous siblings 
+                # second, delete previous siblings
                 while row.getprevious() is not None:
                     del row.getparent()[0]
 
@@ -374,7 +374,7 @@ def load(work):
 
     print('* loading dump')
     os.makedirs(db)
-    
+
     # prepare wiredtiger
     connection = wiredtiger_open(db, "create")
     session = connection.open_session(None)
@@ -620,45 +620,45 @@ def render_question(args):
     filepath = os.path.join(build, filename)
 
     # offline images
-    for post in chain([question], question.answers):
+    # for post in chain([question], question.answers):
 
-        try:
-            body = string2html(post.Body)
-        except Exception as exc:
-            print 'string2html failed for post Id:{}'.format(post.Id)
-            print exc
-        else:
-            imgs = body.xpath('//img')
-            dirty = False
-            for img in imgs:
-                src = img.attrib['src']
-                ext = os.path.splitext(src)[1]
-                filename = sha1(src).hexdigest() + ext
-                out = os.path.join(build, '..', 'static', 'images', filename)
-                # download the image only if it's not already downloaded
-                if os.path.exists(out):
-                    continue
-                try:
-                    download(src, out)
-                except Exception as exc:
-                    print 'download {} failed with:'.format(src)
-                    print exc
-                else:
-                    # update post's html
-                    src = '../static/images/' + filename
-                    img.attrib['src'] = src
-                    # finalize offlining
-                    try:
-                        # resize(out)
-                        # optimize(out)
-                        pass
-                    except Exception as exc:
-                        print "resize or optimize of {} failed".format(src)
-                        print exc
-                    else:
-                        dirty = True
-            if dirty:
-                post.Body = html2string(body)
+    #     try:
+    #         body = string2html(post.Body)
+    #     except Exception as exc:
+    #         print 'string2html failed for post Id:{}'.format(post.Id)
+    #         print exc
+    #     else:
+    #         imgs = body.xpath('//img')
+    #         dirty = False
+    #         for img in imgs:
+    #             src = img.attrib['src']
+    #             ext = os.path.splitext(src)[1]
+    #             filename = sha1(src).hexdigest() + ext
+    #             out = os.path.join(build, '..', 'static', 'images', filename)
+    #             # download the image only if it's not already downloaded
+    #             if os.path.exists(out):
+    #                 continue
+    #             try:
+    #                 download(src, out)
+    #             except Exception as exc:
+    #                 print 'download {} failed with:'.format(src)
+    #                 print exc
+    #             else:
+    #                 # update post's html
+    #                 src = '../static/images/' + filename
+    #                 img.attrib['src'] = src
+    #                 # finalize offlining
+    #                 try:
+    #                     # resize(out)
+    #                     # optimize(out)
+    #                     pass
+    #                 except Exception as exc:
+    #                     print "resize or optimize of {} failed".format(src)
+    #                     print exc
+    #                 else:
+    #                     dirty = True
+    #         if dirty:
+    #             post.Body = html2string(body)
 
     # properly order by highest score
     question.answers = reversed(question.answers)
@@ -1085,6 +1085,7 @@ if __name__ == '__main__':
         # clean repositories
         try:
             rmtree(os.path.join(work, 'db'))
+            pass
         except OSError:
             pass
         try:
