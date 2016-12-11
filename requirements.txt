@@ -12,3 +12,4 @@ envoy
 setproctitle
 subprocess32
 wiredtiger
+htmlmin
