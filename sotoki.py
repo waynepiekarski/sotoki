@@ -25,6 +25,7 @@ from collections import OrderedDict
 import logging
 from shutil import rmtree
 
+
 import re
 import os.path
 from hashlib import sha1
@@ -63,8 +64,6 @@ import subprocess
 from setproctitle import setproctitle
 from subprocess32 import check_output
 from subprocess32 import TimeoutExpired
-
-from htmlmin import minify
 
 setproctitle('sotoki')
 
@@ -489,7 +488,6 @@ def jinja(output, template, templates, **context):
 
     template = ENV.get_template(template)
     page = template.render(**context)
-    page = minify(page)
     with open(output, 'w') as f:
         f.write(page.encode('utf-8'))
 
