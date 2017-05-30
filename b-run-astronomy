@@ -1,0 +1,4 @@
+#!/bin/bash
+
+cd `dirname $0`
+./a-run-sotoki astronomy.stackexchange.com wayne
